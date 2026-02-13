@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Winged Sea Otter Explorer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; }
+
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+      padding-bottom: 8vh;
+      background: url('/title-bg.png') center/cover no-repeat, linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff; font-family: 'Segoe UI', system-ui, sans-serif;
+      transition: opacity 0.5s;
+    }
+    #loading-screen.hidden { opacity: 0; pointer-events: none; }
+    #loading-title {
+      font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem;
+      background: linear-gradient(90deg, #f6d365, #fda085);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 1px 6px rgba(0,0,0,0.8));
+    }
+    #loading-subtitle { font-size: 1.1rem; color: #e0e0f0; margin-bottom: 2rem; text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+    #loading-bar-container {
+      width: 300px; height: 12px; background: rgba(255,255,255,0.1);
+      border-radius: 6px; overflow: hidden;
+    }
+    #loading-bar {
+      width: 0%; height: 100%; border-radius: 6px;
+      background: linear-gradient(90deg, #f6d365, #fda085);
+      transition: width 0.2s;
+    }
+    #loading-author { font-size: 0.95rem; color: #e0e0f0; margin-bottom: 1.5rem; text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+    #loading-status { margin-top: 1rem; font-size: 0.9rem; color: #c0c0d0; text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+    #play-btn {
+      display: none; margin-top: 1.5rem;
+      padding: 1rem 2.5rem; font-size: 1.3rem; font-weight: 600;
+      border: none; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(135deg, #f6d365, #fda085);
+      color: #1a1a2e; transition: transform 0.15s;
+    }
+    #play-btn:hover { transform: scale(1.05); }
+
+    #pause-screen {
+      position: fixed; inset: 0; z-index: 95;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      background: url('/title-bg.png') center/cover no-repeat, linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff; font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    #pause-screen.visible { display: flex; }
+    #pause-title {
+      font-size: 3rem; font-weight: 700; margin-bottom: 1.5rem;
+      background: linear-gradient(90deg, #f6d365, #fda085);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 1px 6px rgba(0,0,0,0.8));
+    }
+    #resume-btn {
+      padding: 1rem 2.5rem; font-size: 1.3rem; font-weight: 600;
+      border: none; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(135deg, #f6d365, #fda085);
+      color: #1a1a2e; transition: transform 0.15s;
+    }
+    #resume-btn:hover { transform: scale(1.05); }
+
+    #game-over-screen {
+      position: fixed; inset: 0; z-index: 90;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7);
+      color: #fff; font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    #game-over-screen.visible { display: flex; }
+    #game-over-title { font-size: 3rem; font-weight: 700; margin-bottom: 1rem; }
+    #play-again-btn {
+      padding: 1rem 2.5rem; font-size: 1.3rem; font-weight: 600;
+      border: none; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(135deg, #f6d365, #fda085);
+      color: #1a1a2e; transition: transform 0.15s;
+    }
+    #play-again-btn:hover { transform: scale(1.05); }
+
+    #hud {
+      position: fixed; bottom: 20px; left: 20px; z-index: 50;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: rgba(255,255,255,0.6); font-size: 0.8rem; line-height: 1.6;
+      pointer-events: none; transition: opacity 0.3s;
+    }
+    #hud kbd {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      background: rgba(255,255,255,0.15); font-family: inherit;
+    }
+
+    #crosshair {
+      position: fixed; top: 50%; left: 50%; z-index: 55;
+      transform: translate(-50%, -50%);
+      color: rgba(255,255,255,0.5); font-size: 1.5rem;
+      pointer-events: none; font-family: monospace;
+      text-shadow: 0 0 4px rgba(0,0,0,0.5);
+    }
+
+    #block-selector {
+      position: fixed; bottom: 20px; right: 20px; z-index: 55;
+      display: flex; gap: 6px;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .block-slot {
+      width: 40px; height: 40px; border-radius: 6px;
+      border: 2px solid rgba(255,255,255,0.2);
+      display: flex; align-items: center; justify-content: center;
+      color: rgba(255,255,255,0.8); font-size: 0.75rem; font-weight: 600;
+      cursor: pointer; transition: border-color 0.15s, transform 0.15s;
+    }
+    .block-slot.selected {
+      border-color: rgba(255,255,255,0.9);
+      transform: scale(1.15);
+    }
+
+    #touch-controls {
+      display: none; position: fixed; z-index: 60;
+    }
+    @media (pointer: coarse) {
+      #touch-controls { display: block; }
+      #hud { display: none; }
+    }
+    #joystick-zone {
+      position: fixed; left: 0; bottom: 0; width: 40vw; height: 40vh;
+    }
+    .touch-btn {
+      position: fixed; width: 60px; height: 60px; border-radius: 50%;
+      background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.3);
+      color: #fff; font-size: 1.5rem; display: flex; align-items: center; justify-content: center;
+      user-select: none; -webkit-user-select: none; touch-action: none;
+    }
+    #touch-jump { right: 30px; bottom: 100px; }
+    #touch-fly-down { right: 100px; bottom: 30px; }
+    #touch-camera { right: 30px; bottom: 190px; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <div id="loading-screen">
+    <div id="loading-title">Winged Sea Otter Explorer</div>
+    <div id="loading-subtitle">Preparing your adventure...</div>
+    <div id="loading-author">made by Damon Zhang</div>
+    <div id="loading-bar-container"><div id="loading-bar"></div></div>
+    <div id="loading-status">Initializing...</div>
+    <button id="play-btn">Play Game</button>
+  </div>
+
+  <div id="pause-screen">
+    <div id="pause-title">Paused</div>
+    <button id="resume-btn">Resume</button>
+  </div>
+
+  <div id="game-over-screen">
+    <div id="game-over-title">Game Over!</div>
+    <button id="play-again-btn">Play Again</button>
+  </div>
+
+  <div id="hud">
+    <kbd>Click</kbd> Mouse Look &nbsp;
+    <kbd>Esc</kbd> Release Mouse<br>
+    <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move &nbsp;
+    <kbd>Space</kbd> Fly &nbsp;
+    <kbd>Shift</kbd> Descend &nbsp;
+    <kbd>V</kbd> Camera &nbsp;
+    <kbd>B</kbd> Rocket &nbsp;
+    <kbd>G</kbd> Repel<br>
+    <kbd>F</kbd> Place Block &nbsp;
+    <kbd>R</kbd> Remove Block &nbsp;
+    <kbd>Q</kbd>/<kbd>E</kbd> Cycle Block &nbsp;
+    <kbd>1</kbd>-<kbd>5</kbd> Select Block
+  </div>
+
+  <div id="crosshair">+</div>
+
+  <div id="block-selector">
+    <div class="block-slot selected" data-type="dirt" style="background:#8B6914;">1</div>
+    <div class="block-slot" data-type="stone" style="background:#888899;">2</div>
+    <div class="block-slot" data-type="wood" style="background:#9B7043;">3</div>
+    <div class="block-slot" data-type="glass" style="background:rgba(136,204,238,0.5);">4</div>
+    <div class="block-slot" data-type="sand" style="background:#C2B280;">5</div>
+  </div>
+
+  <div id="touch-controls">
+    <div id="joystick-zone"></div>
+    <div class="touch-btn" id="touch-jump">&#9650;</div>
+    <div class="touch-btn" id="touch-fly-down">&#9660;</div>
+    <div class="touch-btn" id="touch-camera">V</div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
