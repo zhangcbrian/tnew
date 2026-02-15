@@ -119,24 +119,35 @@
     }
 
     #touch-controls {
-      display: none; position: fixed; z-index: 60;
+      display: none; position: fixed; inset: 0; z-index: 60;
+      pointer-events: none;
     }
     @media (pointer: coarse) {
       #touch-controls { display: block; }
       #hud { display: none; }
     }
     #joystick-zone {
-      position: fixed; left: 0; bottom: 0; width: 40vw; height: 40vh;
+      position: fixed; left: 0; bottom: 0; width: 45vw; height: 45vh;
+      touch-action: none; pointer-events: auto;
+    }
+    #joystick-indicator {
+      position: absolute; width: 64px; height: 64px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.45); background: rgba(255,255,255,0.2);
+      box-shadow: 0 0 12px rgba(0,0,0,0.4); transform: translate(-50%, -50%);
+      display: none; pointer-events: none;
+    }
+    #touch-actions {
+      position: fixed; right: 16px; bottom: 16px;
+      display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px);
+      gap: 10px; pointer-events: auto; touch-action: none;
     }
     .touch-btn {
-      position: fixed; width: 60px; height: 60px; border-radius: 50%;
-      background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.3);
-      color: #fff; font-size: 1.5rem; display: flex; align-items: center; justify-content: center;
+      width: 56px; height: 56px; border-radius: 14px;
+      background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.35);
+      color: #fff; font-size: 1.4rem; display: flex; align-items: center; justify-content: center;
       user-select: none; -webkit-user-select: none; touch-action: none;
+      font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', 'Segoe UI', sans-serif;
     }
-    #touch-jump { right: 30px; bottom: 100px; }
-    #touch-fly-down { right: 100px; bottom: 30px; }
-    #touch-camera { right: 30px; bottom: 190px; font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -185,10 +196,20 @@
   </div>
 
   <div id="touch-controls">
-    <div id="joystick-zone"></div>
-    <div class="touch-btn" id="touch-jump">&#9650;</div>
-    <div class="touch-btn" id="touch-fly-down">&#9660;</div>
-    <div class="touch-btn" id="touch-camera">V</div>
+    <div id="joystick-zone">
+      <div id="joystick-indicator"></div>
+    </div>
+    <div id="touch-actions">
+      <div class="touch-btn" id="touch-fly-up">▲</div>
+      <div class="touch-btn" id="touch-camera">📷</div>
+      <div class="touch-btn" id="touch-pause">⏸</div>
+      <div class="touch-btn" id="touch-descend">▼</div>
+      <div class="touch-btn" id="touch-rocket">🚀</div>
+      <div class="touch-btn" id="touch-repel">💨</div>
+      <div class="touch-btn" id="touch-place">➕</div>
+      <div class="touch-btn" id="touch-remove">➖</div>
+      <div class="touch-btn" id="touch-cycle">🔄</div>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>
