@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { getSurrealFactor } from './terrain';
+import { octaveNoise } from '../utils/noise';
+import { smoothstep } from '../utils/math-helpers';
 
 const RAIN_COUNT = 8000;
 const SNOW_COUNT = 4000;
@@ -68,9 +69,10 @@ export class Weather {
   }
 
   update(dt: number, time: number, playerX: number, playerY: number, playerZ: number) {
-    // Weather intensity based on surreal factor (distance from center)
-    const surreal = getSurrealFactor(playerX, playerZ);
-    this.intensity = surreal;
+    // Highland weather comes and goes: showers drift through every few minutes.
+    this.intensity = smoothstep(0.35, 0.75, octaveNoise(time * 0.02, 7.3, 2, 0.5, 2, 1));
+    // Snow only up on the high tops, rain everywhere else
+    const highUp = playerY > 60;
 
     // Center particles around the player
     this.group.position.set(playerX, playerY, playerZ);
@@ -78,7 +80,7 @@ export class Weather {
     // Rain visibility and animation
     const rainMat = this.rainMesh.material as THREE.PointsMaterial;
     rainMat.opacity = this.intensity * 0.7;
-    this.rainMesh.visible = this.intensity > 0.05;
+    this.rainMesh.visible = !highUp && this.intensity > 0.05;
 
     if (this.rainMesh.visible) {
       const windX = Math.sin(time * 0.7) * 8 * this.intensity;
@@ -111,7 +113,7 @@ export class Weather {
     // Snow visibility and animation
     const snowMat = this.snowMesh.material as THREE.PointsMaterial;
     snowMat.opacity = this.intensity * 0.9;
-    this.snowMesh.visible = this.intensity > 0.1;
+    this.snowMesh.visible = highUp && this.intensity > 0.1;
 
     if (this.snowMesh.visible) {
       for (let i = 0; i < SNOW_COUNT; i++) {
