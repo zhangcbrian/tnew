@@ -62,7 +62,13 @@ export class Game {
   private climateReady = false;
   private renderScale = 1;
   private avgFrame = 1 / 60;
-  private scaleTimer = 0;
+  private slowTime = 0;
+  private steadyTime = 0;
+  private sinceChange = 0;
+  private dropBlockedFor = 0;
+  private raiseBlockedFor = 0;
+  private lastChangeWasRaise = false;
+  private lastDrop: { scaleBefore: number; frameBefore: number } | null = null;
   private targetClimate = createClimate();
 
   // Fog reference for falling effect
@@ -369,20 +375,45 @@ export class Game {
   }
 
   /**
-   * Dynamic resolution: if frames stay slow, render fewer pixels; when they've been steady
-   * for a while, try more again. Waits after each change so it doesn't flip back and forth.
+   * Dynamic resolution: after 2 s of continuously slow frames, render fewer pixels; after 8 s of
+   * continuously smooth frames, try more again. If a drop doesn't actually speed frames up (the
+   * display or browser is capped at a low frame rate), undo it and stop trying for a while.
    */
   private adaptResolution(dt: number) {
     this.avgFrame += (dt - this.avgFrame) * 0.05;
-    this.scaleTimer += dt;
-    let next = this.renderScale;
-    if (this.avgFrame > SLOW_FRAME && this.scaleTimer > 2) next = Math.max(MIN_RENDER_SCALE, this.renderScale - 0.1);
-    else if (this.avgFrame < STEADY_FRAME && this.scaleTimer > 8) next = Math.min(1, this.renderScale + 0.1);
-    if (next !== this.renderScale) {
-      this.renderScale = next;
-      this.scaleTimer = 0;
-      this.renderer.setPixelRatio(this.pixelRatio());
+    this.slowTime = this.avgFrame > SLOW_FRAME ? this.slowTime + dt : 0;
+    this.steadyTime = this.avgFrame < STEADY_FRAME ? this.steadyTime + dt : 0;
+    this.sinceChange += dt;
+
+    // Judge the last drop once it's had time to take effect
+    if (this.lastDrop && this.sinceChange > 3) {
+      if (this.avgFrame > this.lastDrop.frameBefore * 0.92) {
+        this.setRenderScale(this.lastDrop.scaleBefore); // no gain: frame rate is capped, not GPU-bound
+        this.dropBlockedFor = 300;
+      }
+      this.lastDrop = null;
     }
+    this.dropBlockedFor = Math.max(0, this.dropBlockedFor - dt);
+    this.raiseBlockedFor = Math.max(0, this.raiseBlockedFor - dt);
+
+    if (this.slowTime > 2 && this.dropBlockedFor === 0 && !this.lastDrop && this.renderScale > MIN_RENDER_SCALE) {
+      // A step up that made frames slow again: stay at this level for a good while
+      if (this.lastChangeWasRaise && this.sinceChange < 8) this.raiseBlockedFor = 120;
+      this.lastDrop = { scaleBefore: this.renderScale, frameBefore: this.avgFrame };
+      this.setRenderScale(Math.max(MIN_RENDER_SCALE, this.renderScale - 0.1));
+      this.lastChangeWasRaise = false;
+    } else if (this.steadyTime > 8 && this.raiseBlockedFor === 0 && this.renderScale < 1) {
+      this.setRenderScale(Math.min(1, this.renderScale + 0.1));
+      this.lastChangeWasRaise = true;
+    }
+  }
+
+  private setRenderScale(scale: number) {
+    this.renderScale = Math.round(scale * 10) / 10;
+    this.slowTime = 0;
+    this.steadyTime = 0;
+    this.sinceChange = 0;
+    this.renderer.setPixelRatio(this.pixelRatio());
   }
 
   /** Sky, fog, water and weather follow the landscape the player is in (blended near borders). */
