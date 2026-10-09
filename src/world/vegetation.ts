@@ -1,131 +1,8 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { octaveNoise, mulberry32, hash2 } from '../utils/noise';
+import { mulberry32, hash2 } from '../utils/noise';
 import { getTerrainHeightCached, CHUNK_SIZE } from './terrain';
 import { UNLOAD_RADIUS } from './chunk-manager';
-
-/** Paint a part one color (as a vertex color) so parts can be merged into one geometry. */
-function painted(geo: THREE.BufferGeometry, color: number): THREE.BufferGeometry {
-  const g = geo.index ? geo.toNonIndexed() : geo;
-  const c = new THREE.Color(color);
-  const n = g.attributes.position.count;
-  const colors = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  g.deleteAttribute('uv');
-  return g;
-}
-
-function merge(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
-  return mergeGeometries(parts)!;
-}
-
-function scotsPine(): THREE.BufferGeometry {
-  // Tall bare red-brown trunk with an irregular, flat-topped crown
-  const parts = [painted(new THREE.CylinderGeometry(0.16, 0.3, 6, 6).translate(0, 3, 0), 0x7a4a2e)];
-  const crowns: [number, number, number, number][] = [
-    [0, 6.4, 0, 1.6], [0.9, 5.6, 0.3, 1.1], [-0.8, 5.9, -0.4, 1.2], [0.2, 7.0, -0.6, 1.0],
-  ];
-  for (const [x, y, z, r] of crowns) {
-    parts.push(painted(new THREE.SphereGeometry(r, 6, 4).scale(1, 0.5, 1).translate(x, y, z), 0x2f4a2c));
-  }
-  return merge(parts);
-}
-
-function birch(): THREE.BufferGeometry {
-  return merge([
-    painted(new THREE.CylinderGeometry(0.08, 0.13, 4.5, 6).translate(0, 2.25, 0), 0xe8e4dc),
-    painted(new THREE.SphereGeometry(1.1, 6, 5).scale(1, 1.4, 1).translate(0, 4.6, 0), 0x7d9a48),
-  ]);
-}
-
-function heather(): THREE.BufferGeometry {
-  return merge([
-    painted(new THREE.SphereGeometry(0.55, 6, 4).scale(1.2, 0.45, 1).translate(0, 0.15, 0), 0x7b4f73),
-    painted(new THREE.SphereGeometry(0.35, 5, 3).scale(1, 0.5, 1).translate(0.45, 0.12, 0.2), 0x8d5c86),
-  ]);
-}
-
-function gorse(): THREE.BufferGeometry {
-  const parts = [painted(new THREE.SphereGeometry(0.8, 6, 5).scale(1.1, 0.75, 1).translate(0, 0.5, 0), 0x3f5a2a)];
-  // Yellow flowers dotted over the top
-  const flowers: [number, number, number][] = [[0.4, 0.95, 0.3], [-0.5, 0.85, 0.2], [0.1, 1.05, -0.4], [-0.2, 0.9, 0.5], [0.6, 0.7, -0.3]];
-  for (const [x, y, z] of flowers) {
-    parts.push(painted(new THREE.DodecahedronGeometry(0.16, 0).translate(x, y, z), 0xf2c62a));
-  }
-  return merge(parts);
-}
-
-function bracken(): THREE.BufferGeometry {
-  const parts: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2;
-    const frond = new THREE.ConeGeometry(0.28, 0.9, 4).scale(1, 1, 0.2);
-    frond.rotateZ(0.6).rotateY(a).translate(Math.cos(a) * 0.2, 0.4, Math.sin(a) * 0.2);
-    parts.push(painted(frond, 0x9a6a34));
-  }
-  return merge(parts);
-}
-
-function boulder(): THREE.BufferGeometry {
-  return painted(new THREE.DodecahedronGeometry(0.8, 0).scale(1.2, 0.7, 1).translate(0, 0.25, 0), 0x7f7f84);
-}
-
-function grassTuft(): THREE.BufferGeometry {
-  const parts: THREE.BufferGeometry[] = [];
-  for (const [x, z, r] of [[0, 0, 0], [0.12, 0.05, 0.3], [-0.1, 0.08, -0.25]]) {
-    parts.push(painted(new THREE.ConeGeometry(0.06, 0.55, 3).rotateZ(r).translate(x, 0.27, z), 0x8a9353));
-  }
-  return merge(parts);
-}
-
-interface PlantType {
-  name: string;
-  geo: THREE.BufferGeometry;
-  /** Max instances per chunk */
-  perChunk: number;
-  shadow: boolean;
-  scale: [number, number];
-  /** Can this plant grow here? `rand` is a fresh random 0..1 for density thinning. */
-  fits(h: number, slope: number, x: number, z: number, rand: number): boolean;
-}
-
-const PLANTS: PlantType[] = [
-  {
-    name: 'pine', geo: scotsPine(), perChunk: 28, shadow: true, scale: [0.8, 1.5],
-    // Clustered stands in sheltered low and mid ground
-    fits: (h, s, x, z) => h > 1.5 && h < 45 && s < 0.35 && octaveNoise(x, z, 2, 0.5, 2, 0.01) > 0.25,
-  },
-  {
-    name: 'birch', geo: birch(), perChunk: 8, shadow: false, scale: [0.8, 1.2],
-    fits: (h, s, _x, _z, r) => h > 1.5 && h < 30 && s < 0.3 && r < 0.35,
-  },
-  {
-    name: 'heather', geo: heather(), perChunk: 30, shadow: false, scale: [0.7, 1.6],
-    fits: (h, s) => h > 8 && h < 70 && s < 0.45,
-  },
-  {
-    name: 'gorse', geo: gorse(), perChunk: 10, shadow: false, scale: [0.7, 1.3],
-    fits: (h, s, _x, _z, r) => h > 2 && h < 35 && s < 0.35 && r < 0.5,
-  },
-  {
-    name: 'bracken', geo: bracken(), perChunk: 24, shadow: false, scale: [0.8, 1.5],
-    fits: (h, s) => h > 1 && h < 30 && s < 0.3,
-  },
-  {
-    name: 'boulder', geo: boulder(), perChunk: 12, shadow: false, scale: [0.4, 2.0],
-    // Anywhere dry, but much more common on steep or high ground
-    fits: (h, s, _x, _z, r) => h > 0.3 && s < 0.7 && r < (s > 0.3 || h > 50 ? 0.9 : 0.2),
-  },
-  {
-    name: 'grass', geo: grassTuft(), perChunk: 40, shadow: false, scale: [0.8, 1.6],
-    fits: (h, s) => h > 0.6 && h < 40 && s < 0.4,
-  },
-];
+import { BIOMES, biomeWeights, type Biome, type PlantType } from './biomes';
 
 /** Enough slots for every chunk inside the unload radius, plus a margin. */
 const SLOTS = (() => {
@@ -145,101 +22,148 @@ function slopeAt(x: number, z: number): number {
 }
 
 /**
- * Highland plants, placed per terrain chunk. Each plant type is one big InstancedMesh;
- * every loaded chunk owns a fixed block of instances ("slot") that is filled when the chunk
- * loads and hidden again when it unloads. The same chunk always gets the same plants.
+ * One plant type's instances. Chunks that grow at least one of this plant borrow a "slot"
+ * (a fixed block of instances); only slots up to the highest one in use are drawn, so plants
+ * from landscapes that aren't nearby cost nothing.
+ */
+class PlantPool {
+  mesh: THREE.InstancedMesh;
+  private free: number[] = [];
+  private used = new Map<string, number>();
+
+  constructor(readonly type: PlantType, readonly biome: Biome) {
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
+    this.mesh = new THREE.InstancedMesh(type.geo, mat, SLOTS * type.perChunk);
+    this.mesh.name = type.name;
+    this.mesh.castShadow = type.shadow;
+    this.mesh.receiveShadow = true;
+    this.mesh.frustumCulled = false; // instances are spread across the whole view
+    const white = new THREE.Color(1, 1, 1);
+    for (let i = 0; i < SLOTS * type.perChunk; i++) {
+      this.mesh.setMatrixAt(i, HIDDEN);
+      this.mesh.setColorAt(i, white);
+    }
+    for (let s = SLOTS - 1; s >= 0; s--) this.free.push(s);
+    this.updateCount();
+  }
+
+  /** Write a chunk's instances (matrices + tints). Returns false if the pool is full. */
+  fill(key: string, matrices: THREE.Matrix4[], tints: THREE.Color[]): boolean {
+    this.free.sort((a, b) => b - a); // lowest free slot first, keeping used slots packed
+    const slot = this.free.pop();
+    if (slot === undefined) return false;
+    this.used.set(key, slot);
+    const per = this.type.perChunk;
+    const base = slot * per;
+    for (let i = 0; i < per; i++) {
+      this.mesh.setMatrixAt(base + i, i < matrices.length ? matrices[i] : HIDDEN);
+      if (i < tints.length) this.mesh.setColorAt(base + i, tints[i]);
+    }
+    this.markDirty(base, per);
+    this.updateCount();
+    return true;
+  }
+
+  release(key: string) {
+    const slot = this.used.get(key);
+    if (slot === undefined) return;
+    this.used.delete(key);
+    const per = this.type.perChunk;
+    for (let i = 0; i < per; i++) this.mesh.setMatrixAt(slot * per + i, HIDDEN);
+    this.markDirty(slot * per, per);
+    this.free.push(slot);
+    this.updateCount();
+  }
+
+  private updateCount() {
+    let top = -1;
+    for (const s of this.used.values()) top = Math.max(top, s);
+    this.mesh.count = (top + 1) * this.type.perChunk;
+    this.mesh.visible = this.mesh.count > 0;
+  }
+
+  private markDirty(base: number, n: number) {
+    this.mesh.instanceMatrix.addUpdateRange(base * 16, n * 16);
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) {
+      this.mesh.instanceColor.addUpdateRange(base * 3, n * 3);
+      this.mesh.instanceColor.needsUpdate = true;
+    }
+  }
+}
+
+/**
+ * Plants for every landscape, placed per terrain chunk. Near a region edge, each candidate spot
+ * picks its landscape by the blend weights, so forests thin out into deserts gradually.
+ * The same chunk always gets the same plants.
  */
 export class Vegetation {
   group = new THREE.Group();
-  private meshes: THREE.InstancedMesh[] = [];
-  private freeSlots: number[] = [];
-  private chunkSlots = new Map<string, number>();
+  private pools: PlantPool[] = [];
   private dummy = new THREE.Object3D();
-  private tint = new THREE.Color();
 
   constructor() {
-    for (const p of PLANTS) {
-      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
-      const mesh = new THREE.InstancedMesh(p.geo, mat, SLOTS * p.perChunk);
-      mesh.name = p.name;
-      mesh.castShadow = p.shadow;
-      mesh.receiveShadow = true;
-      mesh.frustumCulled = false; // instances are spread across the whole view
-      for (let i = 0; i < mesh.count; i++) {
-        mesh.setMatrixAt(i, HIDDEN);
-        mesh.setColorAt(i, this.tint.setRGB(1, 1, 1));
+    for (const biome of BIOMES) {
+      for (const type of biome.plants) {
+        const pool = new PlantPool(type, biome);
+        this.pools.push(pool);
+        this.group.add(pool.mesh);
       }
-      this.meshes.push(mesh);
-      this.group.add(mesh);
     }
-    for (let s = SLOTS - 1; s >= 0; s--) this.freeSlots.push(s);
-    this.updateDrawCounts();
-  }
-
-  /** Only draw instances up to the highest slot in use, so empty slots cost nothing. */
-  private updateDrawCounts() {
-    let top = -1;
-    for (const s of this.chunkSlots.values()) top = Math.max(top, s);
-    PLANTS.forEach((p, t) => { this.meshes[t].count = (top + 1) * p.perChunk; });
   }
 
   addChunk(cx: number, cz: number) {
     const key = `${cx},${cz}`;
-    if (this.chunkSlots.has(key)) return;
-    // Lowest free slot first, keeping used slots packed at the front
-    this.freeSlots.sort((a, b) => b - a);
-    const slot = this.freeSlots.pop();
-    if (slot === undefined) return; // out of slots: chunk just has no plants
-    this.chunkSlots.set(key, slot);
+    const x0 = cx * CHUNK_SIZE;
+    const z0 = cz * CHUNK_SIZE;
 
-    PLANTS.forEach((p, t) => {
-      const mesh = this.meshes[t];
+    // Landscapes present anywhere in this chunk (center + corners)
+    const present = new Set<Biome>();
+    for (const [dx, dz] of [[0, 0], [-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
+      for (const { biome } of biomeWeights(x0 + dx * CHUNK_SIZE, z0 + dz * CHUNK_SIZE)) present.add(biome);
+    }
+
+    this.pools.forEach((pool, t) => {
+      if (!present.has(pool.biome)) return;
+      const type = pool.type;
       const rng = mulberry32(hash2(cx, cz) + t * 7919);
-      const base = slot * p.perChunk;
-      let placed = 0;
-      for (let attempt = 0; attempt < p.perChunk * 2 && placed < p.perChunk; attempt++) {
-        const x = cx * CHUNK_SIZE + (rng() - 0.5) * CHUNK_SIZE;
-        const z = cz * CHUNK_SIZE + (rng() - 0.5) * CHUNK_SIZE;
+      const matrices: THREE.Matrix4[] = [];
+      const tints: THREE.Color[] = [];
+      for (let attempt = 0; attempt < type.perChunk * 2 && matrices.length < type.perChunk; attempt++) {
+        const x = x0 + (rng() - 0.5) * CHUNK_SIZE;
+        const z = z0 + (rng() - 0.5) * CHUNK_SIZE;
         const r = rng();
+        const pick = rng();
+        if (present.size > 1 && this.biomeAt(x, z, pick) !== pool.biome) continue;
         const h = getTerrainHeightCached(x, z);
-        if (!p.fits(h, slopeAt(x, z), x, z, r)) continue;
+        if (!type.fits(h, slopeAt(x, z), x, z, r)) continue;
 
-        const s = p.scale[0] + rng() * (p.scale[1] - p.scale[0]);
+        const s = type.scale[0] + rng() * (type.scale[1] - type.scale[0]);
         this.dummy.position.set(x, h - 0.05, z);
         this.dummy.rotation.set(0, rng() * Math.PI * 2, 0);
         this.dummy.scale.set(s, s * (0.85 + rng() * 0.3), s);
         this.dummy.updateMatrix();
-        mesh.setMatrixAt(base + placed, this.dummy.matrix);
+        matrices.push(this.dummy.matrix.clone());
         const v = 0.85 + rng() * 0.25;
-        mesh.setColorAt(base + placed, this.tint.setRGB(v, v * (0.95 + rng() * 0.1), v));
-        placed++;
+        tints.push(new THREE.Color(v, v * (0.95 + rng() * 0.1), v));
       }
-      for (let i = placed; i < p.perChunk; i++) mesh.setMatrixAt(base + i, HIDDEN);
-      this.markSlotDirty(mesh, base, p.perChunk);
+      if (matrices.length > 0) pool.fill(key, matrices, tints);
     });
-    this.updateDrawCounts();
   }
 
   removeChunk(cx: number, cz: number) {
     const key = `${cx},${cz}`;
-    const slot = this.chunkSlots.get(key);
-    if (slot === undefined) return;
-    this.chunkSlots.delete(key);
-    PLANTS.forEach((p, t) => {
-      const base = slot * p.perChunk;
-      for (let i = 0; i < p.perChunk; i++) this.meshes[t].setMatrixAt(base + i, HIDDEN);
-      this.markSlotDirty(this.meshes[t], base, p.perChunk);
-    });
-    this.freeSlots.push(slot);
-    this.updateDrawCounts();
+    for (const pool of this.pools) pool.release(key);
   }
 
-  private markSlotDirty(mesh: THREE.InstancedMesh, base: number, n: number) {
-    mesh.instanceMatrix.addUpdateRange(base * 16, n * 16);
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) {
-      mesh.instanceColor.addUpdateRange(base * 3, n * 3);
-      mesh.instanceColor.needsUpdate = true;
+  /** Pick one landscape at (x, z) in proportion to the blend weights. */
+  private biomeAt(x: number, z: number, pick: number): Biome {
+    const weights = biomeWeights(x, z);
+    let acc = 0;
+    for (const { biome, w } of weights) {
+      acc += w;
+      if (pick < acc) return biome;
     }
+    return weights[weights.length - 1].biome;
   }
 }
