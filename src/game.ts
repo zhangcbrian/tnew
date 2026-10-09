@@ -282,7 +282,7 @@ export class Game {
     // Shadow follows player
     this.sunLight.position.set(
       this.otter.position.x + 80,
-      100,
+      this.otter.position.y + 100,
       this.otter.position.z + 60,
     );
     this.sunLight.target.position.copy(this.otter.position);

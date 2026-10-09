@@ -101,7 +101,7 @@ const PLANTS: PlantType[] = [
     fits: (h, s, x, z) => h > 1.5 && h < 45 && s < 0.35 && octaveNoise(x, z, 2, 0.5, 2, 0.01) > 0.25,
   },
   {
-    name: 'birch', geo: birch(), perChunk: 8, shadow: true, scale: [0.8, 1.2],
+    name: 'birch', geo: birch(), perChunk: 8, shadow: false, scale: [0.8, 1.2],
     fits: (h, s, _x, _z, r) => h > 1.5 && h < 30 && s < 0.3 && r < 0.35,
   },
   {
@@ -109,7 +109,7 @@ const PLANTS: PlantType[] = [
     fits: (h, s) => h > 8 && h < 70 && s < 0.45,
   },
   {
-    name: 'gorse', geo: gorse(), perChunk: 10, shadow: true, scale: [0.7, 1.3],
+    name: 'gorse', geo: gorse(), perChunk: 10, shadow: false, scale: [0.7, 1.3],
     fits: (h, s, _x, _z, r) => h > 2 && h < 35 && s < 0.35 && r < 0.5,
   },
   {
@@ -117,7 +117,7 @@ const PLANTS: PlantType[] = [
     fits: (h, s) => h > 1 && h < 30 && s < 0.3,
   },
   {
-    name: 'boulder', geo: boulder(), perChunk: 12, shadow: true, scale: [0.4, 2.0],
+    name: 'boulder', geo: boulder(), perChunk: 12, shadow: false, scale: [0.4, 2.0],
     // Anywhere dry, but much more common on steep or high ground
     fits: (h, s, _x, _z, r) => h > 0.3 && s < 0.7 && r < (s > 0.3 || h > 50 ? 0.9 : 0.2),
   },
@@ -173,11 +173,21 @@ export class Vegetation {
       this.group.add(mesh);
     }
     for (let s = SLOTS - 1; s >= 0; s--) this.freeSlots.push(s);
+    this.updateDrawCounts();
+  }
+
+  /** Only draw instances up to the highest slot in use, so empty slots cost nothing. */
+  private updateDrawCounts() {
+    let top = -1;
+    for (const s of this.chunkSlots.values()) top = Math.max(top, s);
+    PLANTS.forEach((p, t) => { this.meshes[t].count = (top + 1) * p.perChunk; });
   }
 
   addChunk(cx: number, cz: number) {
     const key = `${cx},${cz}`;
     if (this.chunkSlots.has(key)) return;
+    // Lowest free slot first, keeping used slots packed at the front
+    this.freeSlots.sort((a, b) => b - a);
     const slot = this.freeSlots.pop();
     if (slot === undefined) return; // out of slots: chunk just has no plants
     this.chunkSlots.set(key, slot);
@@ -207,6 +217,7 @@ export class Vegetation {
       for (let i = placed; i < p.perChunk; i++) mesh.setMatrixAt(base + i, HIDDEN);
       this.markSlotDirty(mesh, base, p.perChunk);
     });
+    this.updateDrawCounts();
   }
 
   removeChunk(cx: number, cz: number) {
@@ -220,6 +231,7 @@ export class Vegetation {
       this.markSlotDirty(this.meshes[t], base, p.perChunk);
     });
     this.freeSlots.push(slot);
+    this.updateDrawCounts();
   }
 
   private markSlotDirty(mesh: THREE.InstancedMesh, base: number, n: number) {

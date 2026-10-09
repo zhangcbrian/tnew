@@ -25,19 +25,6 @@ const RECYCLE_DIST = 420;
 const SPAWN_MIN = 60;
 const SPAWN_MAX = 380;
 
-/** A random dry, walkable spot in a ring around (cx, cz), or null if none was found quickly. */
-function pickSpot(cx: number, cz: number, minR: number, maxR: number): { x: number; z: number; h: number } | null {
-  for (let tries = 0; tries < 12; tries++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = minR + Math.random() * (maxR - minR);
-    const x = cx + Math.cos(a) * r;
-    const z = cz + Math.sin(a) * r;
-    const h = getTerrainHeightCached(x, z);
-    if (h >= 1 && h <= 40) return { x, z, h };
-  }
-  return null;
-}
-
 type PersonState = 'WANDER' | 'IDLE' | 'CHASE' | 'RIDING' | 'DROWNING' | 'DEAD' | 'FLEE';
 
 interface Person {
@@ -218,7 +205,7 @@ export class People {
 
     let placed = 0;
     for (let i = 0; i < PERSON_COUNT * 5 && placed < PERSON_COUNT; i++) {
-      const spot = pickSpot(0, 0, 20, SPAWN_MAX);
+      const spot = this.pickSpot(0, 0, 20, SPAWN_MAX);
       if (!spot) continue;
       const { x, z, h } = spot;
 
@@ -554,7 +541,7 @@ export class People {
     const dz = z - otterPos.z;
     if (dx * dx + dz * dz < RECYCLE_DIST * RECYCLE_DIST) return false;
 
-    const spot = pickSpot(otterPos.x, otterPos.z, SPAWN_MIN, SPAWN_MAX);
+    const spot = this.pickSpot(otterPos.x, otterPos.z, SPAWN_MIN, SPAWN_MAX);
     if (!spot) return false;
     p.x = spot.x;
     p.z = spot.z;
@@ -570,6 +557,19 @@ export class People {
     p.fleePhase = 0;
     p.stackSlot = -1;
     return true;
+  }
+
+  /** A random dry, walkable spot (not inside a block) in a ring around (cx, cz), or null. */
+  private pickSpot(cx: number, cz: number, minR: number, maxR: number): { x: number; z: number; h: number } | null {
+    for (let tries = 0; tries < 12; tries++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = minR + Math.random() * (maxR - minR);
+      const x = cx + Math.cos(a) * r;
+      const z = cz + Math.sin(a) * r;
+      const h = getTerrainHeightCached(x, z);
+      if (h >= 1 && h <= 40 && !this.blocks.isSolid(x, h + 0.5, z)) return { x, z, h };
+    }
+    return null;
   }
 
   /** Terrain height, or the top of a block that someone at height y could step onto. */

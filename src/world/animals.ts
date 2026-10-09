@@ -326,6 +326,7 @@ class SpeciesGroup {
   meshes: THREE.InstancedMesh[];
   data: Animal[] = [];
   private herdTimer = Math.random() * HERD_CHECK_INTERVAL;
+  private blocks: BlockQuery = NO_BLOCKS;
 
   constructor(readonly sp: Species, group: THREE.Group) {
     this.meshes = sp.parts.map((part) => {
@@ -359,7 +360,7 @@ class SpeciesGroup {
       const x = cx + Math.cos(a) * r;
       const z = cz + Math.sin(a) * r;
       const y = habitat(this.sp.kind, x, z);
-      if (y === null) continue;
+      if (y === null || this.blocks.isSolid(x, y + 0.5, z)) continue;
       this.place(i, x, y, z);
       return true;
     }
@@ -412,6 +413,7 @@ class SpeciesGroup {
 
   update(dt: number, time: number, px: number, pz: number, blocks: BlockQuery) {
     const kind = this.sp.kind;
+    this.blocks = blocks;
     if (kind === 'herd') this.updateHerds(dt, px, pz);
 
     const nearSq = 70 * 70;

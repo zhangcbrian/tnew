@@ -156,28 +156,25 @@ export class OtterController {
       this.velocity.z = damp(this.velocity.z, 0, 10, dt);
     }
 
-    // Position: move one axis at a time so walking into a block slides along it
+    // Position: move one axis at a time so walking into a block slides along it.
+    // If we're somehow already overlapping a block, let any move through so we can get out.
     const pos = this.model.position;
-    // Walking can step up onto anything up to STEP_UP high; flying can't pass through anything.
-    const feet = pos.y + (isFlying ? 0.05 : STEP_UP);
+    const stuck = this.bodyHits(blocks, pos.x, pos.y, pos.z);
     const nx = pos.x + this.velocity.x * dt;
-    if (blocks.boxHits(nx - HALF_WIDTH, feet, pos.z - HALF_WIDTH, nx + HALF_WIDTH, pos.y + BODY_HEIGHT, pos.z + HALF_WIDTH)) {
-      this.velocity.x = 0;
-    } else {
+    if (stuck || this.canMoveTo(blocks, nx, pos.z, pos.y, isFlying)) {
       pos.x = nx;
+    } else {
+      this.velocity.x = 0;
     }
     const nz = pos.z + this.velocity.z * dt;
-    if (blocks.boxHits(pos.x - HALF_WIDTH, feet, nz - HALF_WIDTH, pos.x + HALF_WIDTH, pos.y + BODY_HEIGHT, nz + HALF_WIDTH)) {
-      this.velocity.z = 0;
-    } else {
+    if (stuck || this.canMoveTo(blocks, pos.x, nz, pos.y, isFlying)) {
       pos.z = nz;
+    } else {
+      this.velocity.z = 0;
     }
 
     // Height: the ground is the terrain or the top of a block we're standing on
-    const terrainH = Math.max(
-      getTerrainHeightCached(pos.x, pos.z),
-      this.blockSupport(blocks, pos.x, pos.z, pos.y + STEP_UP),
-    );
+    const terrainH = this.groundAt(blocks, pos.x, pos.z, pos.y);
 
     if (this.state === 'FLY') {
       if (wantFly) {
@@ -216,6 +213,25 @@ export class OtterController {
 
     // Animations
     this.animate(this.time, dt);
+  }
+
+  /** Terrain height, or the top of a block low enough to step onto from height y. */
+  private groundAt(blocks: BlockQuery, x: number, z: number, y: number): number {
+    return Math.max(getTerrainHeightCached(x, z), this.blockSupport(blocks, x, z, y + STEP_UP));
+  }
+
+  /** Does the body, standing at height y, overlap a block? */
+  private bodyHits(blocks: BlockQuery, x: number, y: number, z: number): boolean {
+    return blocks.boxHits(x - HALF_WIDTH, y + 0.05, z - HALF_WIDTH, x + HALF_WIDTH, y + BODY_HEIGHT, z + HALF_WIDTH);
+  }
+
+  /**
+   * Can the body move to (x, z)? Walking checks at the height it would end up at there
+   * (after climbing a slope or a small step), so we never get pushed up into a roof.
+   */
+  private canMoveTo(blocks: BlockQuery, x: number, z: number, y: number, flying: boolean): boolean {
+    const bodyY = flying ? y : Math.max(y, this.groundAt(blocks, x, z, y));
+    return !this.bodyHits(blocks, x, bodyY, z);
   }
 
   /** Highest block top under any corner of the player's footprint (at or below maxY). */
