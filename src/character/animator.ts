@@ -126,7 +126,8 @@ export class Animator {
     this.pitch = damp(this.pitch, THREE.MathUtils.clamp(-m.climb * 0.03, -0.4, 0.4) * fly, 4, dt);
     this.bank = damp(this.bank, THREE.MathUtils.clamp(m.turn * 0.4, -0.65, 0.65) * fly, 4, dt);
     rig.root.rotation.x += this.pitch;
-    rig.root.rotation.z += this.bank;
+    // The animal faces +Z, so its left is +X; a left turn (turn > 0) must tip the top toward +X, i.e. negative Z roll
+    rig.root.rotation.z -= this.bank;
     for (const leg of rig.legs) {
       leg.hip.rotation.x += (leg.front ? -0.7 : 0.8) * fly;
       if (leg.knee) leg.knee.rotation.x += (leg.front ? 0.9 : -0.6) * fly;
