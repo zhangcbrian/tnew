@@ -18,8 +18,12 @@ export class InputManager {
   private keys = new Set<string>();
   private touchJoystickStartX = 0;
   private touchJoystickStartY = 0;
+  private touchJoystickBaseX = 0;
+  private touchJoystickBaseY = 0;
   private touchJoystickActive = false;
   private touchJoystickId: number | null = null;
+  private touchJoystickZoneRect: DOMRect | null = null;
+  private joystickIndicator: HTMLElement | null = null;
   private touchLookId: number | null = null;
   private touchLookStartX = 0;
   private touchLookStartY = 0;
@@ -77,10 +81,12 @@ export class InputManager {
 
     // Touch controls
     const joystickZone = document.getElementById('joystick-zone');
+    this.joystickIndicator = document.getElementById('joystick-indicator');
     if (joystickZone) {
       joystickZone.addEventListener('touchstart', (e) => this.onTouchJoystickStart(e), { passive: false });
       joystickZone.addEventListener('touchmove', (e) => this.onTouchJoystickMove(e), { passive: false });
       joystickZone.addEventListener('touchend', (e) => this.onTouchJoystickEnd(e), { passive: false });
+      joystickZone.addEventListener('touchcancel', (e) => this.onTouchJoystickEnd(e), { passive: false });
     }
 
     // Right half of screen for looking
@@ -89,21 +95,44 @@ export class InputManager {
     canvas.addEventListener('touchend', (e) => this.onTouchLookEnd(e), { passive: false });
 
     // Touch buttons
-    const jumpBtn = document.getElementById('touch-jump');
-    const flyDownBtn = document.getElementById('touch-fly-down');
+    const flyUpBtn = document.getElementById('touch-fly-up');
+    const descendBtn = document.getElementById('touch-descend');
     const camBtn = document.getElementById('touch-camera');
+    const pauseBtn = document.getElementById('touch-pause');
+    const rocketBtn = document.getElementById('touch-rocket');
+    const repelBtn = document.getElementById('touch-repel');
+    const placeBtn = document.getElementById('touch-place');
+    const removeBtn = document.getElementById('touch-remove');
+    const cycleBtn = document.getElementById('touch-cycle');
 
-    if (jumpBtn) {
-      jumpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); this.keys.add('Space'); });
-      jumpBtn.addEventListener('touchend', () => this.keys.delete('Space'));
-    }
-    if (flyDownBtn) {
-      flyDownBtn.addEventListener('touchstart', (e) => { e.preventDefault(); this.keys.add('ShiftLeft'); });
-      flyDownBtn.addEventListener('touchend', () => this.keys.delete('ShiftLeft'));
-    }
-    if (camBtn) {
-      camBtn.addEventListener('touchstart', (e) => { e.preventDefault(); this.toggleCamera = true; });
-    }
+    const bindPress = (btn: HTMLElement | null, onPress: () => void) => {
+      if (!btn) return;
+      btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        onPress();
+      }, { passive: false });
+    };
+
+    const bindHold = (btn: HTMLElement | null, key: string) => {
+      if (!btn) return;
+      btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        this.keys.add(key);
+      }, { passive: false });
+      const clearKey = () => this.keys.delete(key);
+      btn.addEventListener('touchend', clearKey);
+      btn.addEventListener('touchcancel', clearKey);
+    };
+
+    bindHold(flyUpBtn, 'Space');
+    bindHold(descendBtn, 'ShiftLeft');
+    bindPress(camBtn, () => { this.toggleCamera = true; });
+    bindPress(pauseBtn, () => { this.pauseToggle = true; });
+    bindPress(rocketBtn, () => { this.shootRocket = true; });
+    bindPress(repelBtn, () => { this.repelHumans = true; });
+    bindPress(placeBtn, () => { this.placeBlock = true; });
+    bindPress(removeBtn, () => { this.removeBlock = true; });
+    bindPress(cycleBtn, () => { this.cycleBlockDir = 1; });
   }
 
   update() {
@@ -185,6 +214,13 @@ export class InputManager {
   private onTouchJoystickStart(e: TouchEvent) {
     e.preventDefault();
     const touch = e.changedTouches[0];
+    const target = e.currentTarget as HTMLElement | null;
+    if (target) {
+      this.touchJoystickZoneRect = target.getBoundingClientRect();
+      this.touchJoystickBaseX = touch.clientX - this.touchJoystickZoneRect.left;
+      this.touchJoystickBaseY = touch.clientY - this.touchJoystickZoneRect.top;
+      this.updateJoystickIndicator(this.touchJoystickBaseX, this.touchJoystickBaseY, true);
+    }
     this.touchJoystickId = touch.identifier;
     this.touchJoystickStartX = touch.clientX;
     this.touchJoystickStartY = touch.clientY;
@@ -196,12 +232,30 @@ export class InputManager {
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       if (touch.identifier === this.touchJoystickId && this.touchJoystickActive) {
-        const dx = (touch.clientX - this.touchJoystickStartX) / 50;
-        const dy = -(touch.clientY - this.touchJoystickStartY) / 50;
+        const rawDx = touch.clientX - this.touchJoystickStartX;
+        const rawDy = touch.clientY - this.touchJoystickStartY;
+        const dx = rawDx / 50;
+        const dy = -rawDy / 50;
         this.moveDir.set(
           Math.max(-1, Math.min(1, dx)),
           Math.max(-1, Math.min(1, dy)),
         );
+        const maxRadius = 40;
+        const dist = Math.hypot(rawDx, rawDy);
+        let clampedX = rawDx;
+        let clampedY = rawDy;
+        if (dist > maxRadius) {
+          const scale = maxRadius / dist;
+          clampedX *= scale;
+          clampedY *= scale;
+        }
+        if (this.touchJoystickZoneRect) {
+          this.updateJoystickIndicator(
+            this.touchJoystickBaseX + clampedX,
+            this.touchJoystickBaseY + clampedY,
+            true,
+          );
+        }
       }
     }
   }
@@ -212,6 +266,8 @@ export class InputManager {
         this.touchJoystickId = null;
         this.touchJoystickActive = false;
         this.moveDir.set(0, 0);
+        this.touchJoystickZoneRect = null;
+        this.updateJoystickIndicator(0, 0, false);
       }
     }
   }
@@ -245,5 +301,16 @@ export class InputManager {
         this.touchLookActive = false;
       }
     }
+  }
+
+  private updateJoystickIndicator(x: number, y: number, visible: boolean) {
+    if (!this.joystickIndicator) return;
+    if (!visible) {
+      this.joystickIndicator.style.display = 'none';
+      return;
+    }
+    this.joystickIndicator.style.display = 'block';
+    this.joystickIndicator.style.left = `${x}px`;
+    this.joystickIndicator.style.top = `${y}px`;
   }
 }
