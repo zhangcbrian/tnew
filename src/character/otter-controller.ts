@@ -4,6 +4,7 @@ import { buildCharacter, DEFAULT_CHOICE, type CharacterChoice } from './characte
 import { getTerrainHeightCached } from '../world/terrain';
 import { isOutsideBorder, getBorderRadius } from '../world/cactus-border';
 import { damp, dampAngle } from '../utils/math-helpers';
+import { disposeObject } from '../utils/dispose';
 
 export type OtterState = 'IDLE' | 'WALK' | 'FLY' | 'FALL' | 'GAME_OVER';
 
@@ -53,6 +54,7 @@ export class OtterController {
 
   /** Replace the player's animal, wings and colors, keeping position and state. */
   setCharacter(choice: CharacterChoice) {
+    disposeObject(this.model);
     this.wings.dispose();
     this.model.clear();
     this.wings = this.attach(choice);

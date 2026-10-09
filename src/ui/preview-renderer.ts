@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { disposeObject } from '../utils/dispose';
 
 interface View {
   el: HTMLElement;
@@ -18,6 +19,7 @@ export class PreviewRenderer {
   private renderer: THREE.WebGLRenderer | null = null;
   private views: View[] = [];
   private running = false;
+  private rafId = 0;
   private clock = new THREE.Clock();
   private grassGeo = new THREE.CylinderGeometry(1.4, 1.5, 0.12, 20);
   private grassMat = new THREE.MeshStandardMaterial({ color: '#5a9e3a', flatShading: true });
@@ -62,6 +64,8 @@ export class PreviewRenderer {
 
   /** Remove all views (call before rebuilding a screen). */
   clear() {
+    const shared = new Set<unknown>([this.grassGeo, this.grassMat]);
+    for (const v of this.views) disposeObject(v.scene, shared);
     this.views = [];
   }
 
@@ -70,18 +74,19 @@ export class PreviewRenderer {
     if (this.running) return;
     this.running = true;
     this.clock.getDelta();
-    requestAnimationFrame(this.frame);
+    this.rafId = requestAnimationFrame(this.frame);
   }
 
   stop() {
     this.running = false;
+    cancelAnimationFrame(this.rafId);
     this.clear();
     if (this.renderer) this.renderer.domElement.style.display = 'none';
   }
 
   private frame = () => {
     if (!this.running || !this.renderer) return;
-    requestAnimationFrame(this.frame);
+    this.rafId = requestAnimationFrame(this.frame);
     const dt = Math.min(this.clock.getDelta(), 0.1);
     const r = this.renderer;
     const w = window.innerWidth;
