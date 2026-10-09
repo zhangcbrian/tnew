@@ -1,22 +1,13 @@
 import * as THREE from 'three';
+import { createAnimalMats, type AnimalMats } from './animals/kit';
 
-export function createOtter(): THREE.Group {
+export function createOtter(m?: AnimalMats): THREE.Group {
   const otter = new THREE.Group();
   otter.name = 'otter';
 
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0x2b4f72,
-    roughness: 0.75,
-    metalness: 0.08,
-    flatShading: true,
-  });
-
-  const bellyMat = new THREE.MeshStandardMaterial({
-    color: 0x7a9cb8,
-    roughness: 0.8,
-    metalness: 0.05,
-    flatShading: true,
-  });
+  const mats = m ?? createAnimalMats('#2b4f72', '#7a9cb8');
+  const bodyMat = mats.body;
+  const bellyMat = mats.belly;
 
   const darkMat = new THREE.MeshStandardMaterial({
     color: 0x1a1a1a,
