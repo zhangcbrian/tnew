@@ -25,6 +25,13 @@ export class Water {
     this.mesh.receiveShadow = true;
   }
 
+  /** Water look of the current landscape (e.g. muddy rivers, icy Arctic lakes). */
+  setColor(color: THREE.Color, opacity: number) {
+    const m = this.mesh.material as THREE.MeshStandardMaterial;
+    m.color.copy(color);
+    m.opacity = opacity;
+  }
+
   /** Bob gently and stay under the player (snapped to the chunk grid so it doesn't visibly slide). */
   update(time: number, playerX: number, playerZ: number) {
     this.mesh.position.x = Math.round(playerX / CHUNK_SIZE) * CHUNK_SIZE;

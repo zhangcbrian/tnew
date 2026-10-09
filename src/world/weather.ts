@@ -68,11 +68,15 @@ export class Weather {
     this.group.add(this.snowMesh);
   }
 
-  update(dt: number, time: number, playerX: number, playerY: number, playerZ: number) {
-    // Highland weather comes and goes: showers drift through every few minutes.
-    this.intensity = smoothstep(0.35, 0.75, octaveNoise(time * 0.02, 7.3, 2, 0.5, 2, 1));
-    // Snow only up on the high tops, rain everywhere else
-    const highUp = playerY > 60;
+  /**
+   * `rain`: how rainy this landscape is (0 = never, 1 = very often).
+   * `snow`: 0..1 share of the weather that falls as snow (Arctic) — high tops always get snow.
+   */
+  update(dt: number, time: number, playerX: number, playerY: number, playerZ: number, rain = 0.5, snow = 0) {
+    // Showers drift through; rainier landscapes get them more often and for longer.
+    const start = 0.75 - rain * 1.1;
+    this.intensity = rain <= 0.01 ? 0 : smoothstep(start, start + 0.4, octaveNoise(time * 0.02, 7.3, 2, 0.5, 2, 1));
+    const highUp = playerY > 60 || snow > 0.5;
 
     // Center particles around the player
     this.group.position.set(playerX, playerY, playerZ);

@@ -58,6 +58,13 @@ export class Skybox {
     this.sunDirection.copy((material.uniforms.sunDirection.value as THREE.Vector3));
   }
 
+  /** Change the sky gradient (blended per landscape). */
+  setColors(top: THREE.Color, bottom: THREE.Color) {
+    const u = (this.sky.material as THREE.ShaderMaterial).uniforms;
+    (u.topColor.value as THREE.Color).copy(top);
+    (u.bottomColor.value as THREE.Color).copy(bottom);
+  }
+
   /** Keep the sky centered on the camera so it never ends in an endless world. */
   update(cameraPos: THREE.Vector3) {
     this.sky.position.copy(cameraPos);

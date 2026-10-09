@@ -17,6 +17,7 @@ import { Weather } from './world/weather';
 import { Animals } from './world/animals';
 import { BuildingSystem } from './world/building';
 import { People } from './world/people';
+import { blendClimate, createClimate, dominantBiome } from './world/biomes';
 import { SciaticaSound } from './audio/sciatica-sound';
 import { ShockwaveEffect } from './effects/shockwave';
 
@@ -51,6 +52,9 @@ export class Game {
   private resizeQueued = false;
   private readonly mouseDelta = new THREE.Vector2();
   private lastHudBlockIndex = -1;
+  private climate = createClimate();
+  private climateReady = false;
+  private targetClimate = createClimate();
 
   // Fog reference for falling effect
   private baseFogNear = 140;
@@ -275,7 +279,8 @@ export class Game {
     this.chunkManager.update(this.otter.position.x, this.otter.position.z);
     this.water.update(time, this.otter.position.x, this.otter.position.z);
     this.skybox.update(this.cameraSystem.camera.position);
-    this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z);
+    this.applyClimate(dt);
+    this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z, this.climate.rain, this.climate.snow);
     this.animals.update(dt, time, this.otter.position, this.building);
     this.people.update(dt, time, this.otter.position, this.otter.heading);
 
@@ -344,6 +349,33 @@ export class Game {
         this.state = 'title';
         break;
     }
+  }
+
+  /** Sky, fog, water and weather follow the landscape the player is in (blended near borders). */
+  private applyClimate(dt: number) {
+    const p = this.otter.position;
+    const target = blendClimate(p.x, p.z, this.targetClimate);
+    const c = this.climate;
+    // Ease toward the target so crossing a border never flashes
+    const k = this.climateReady ? 1 - Math.exp(-dt * 1.5) : 1;
+    this.climateReady = true;
+    c.skyTop.lerp(target.skyTop, k);
+    c.skyBottom.lerp(target.skyBottom, k);
+    c.fog.lerp(target.fog, k);
+    c.water.lerp(target.water, k);
+    c.fogNear += (target.fogNear - c.fogNear) * k;
+    c.fogFar += (target.fogFar - c.fogFar) * k;
+    c.waterOpacity += (target.waterOpacity - c.waterOpacity) * k;
+    c.rain += (target.rain - c.rain) * k;
+    c.snow += (target.snow - c.snow) * k;
+
+    this.skybox.setColors(c.skyTop, c.skyBottom);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.copy(c.fog);
+    fog.near = c.fogNear;
+    fog.far = c.fogFar;
+    this.water.setColor(c.water, c.waterOpacity);
+    this.hud.setRegion(dominantBiome(p.x, p.z).name);
   }
 
   private resetFog() {

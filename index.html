@@ -93,6 +93,22 @@
       background: rgba(255,255,255,0.15); font-family: inherit;
     }
 
+    #region-label {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 55;
+      padding: 6px 16px; border-radius: 999px;
+      background: rgba(0,0,0,0.35); color: rgba(255,255,255,0.9);
+      font-family: 'Segoe UI', system-ui, sans-serif; font-size: 0.95rem; font-weight: 600;
+      letter-spacing: 0.02em; pointer-events: none; opacity: 0; transition: opacity 0.3s;
+      white-space: nowrap;
+    }
+    #region-label.visible { opacity: 1; }
+    #region-label.changed { animation: region-pop 2.5s ease-out; }
+    @keyframes region-pop {
+      0% { transform: translateX(-50%) scale(1.35); background: rgba(246,211,101,0.85); color: #1a1a2e; }
+      30% { transform: translateX(-50%) scale(1.35); background: rgba(246,211,101,0.85); color: #1a1a2e; }
+      100% { transform: translateX(-50%) scale(1); }
+    }
+
     #crosshair {
       position: fixed; top: 50%; left: 50%; z-index: 55;
       transform: translate(-50%, -50%);
@@ -271,6 +287,8 @@
     <kbd>Q</kbd>/<kbd>E</kbd> Cycle Block &nbsp;
     <kbd>1</kbd>-<kbd>5</kbd> Select Block
   </div>
+
+  <div id="region-label"></div>
 
   <div id="crosshair">+</div>
 
