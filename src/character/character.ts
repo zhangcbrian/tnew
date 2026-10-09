@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { type AnimalId, type AnimalMats, createAnimalMats, getAnimal } from './animals';
+import { type AnimalId, getAnimal } from './animals';
+import { createAvatarMats, type AvatarMats, type Rig } from './rig';
 import { Wings, WING_TYPES, type WingId } from './wings';
 
 export interface CharacterColors {
@@ -18,7 +19,8 @@ export interface CharacterChoice {
 export interface BuiltCharacter {
   group: THREE.Group;
   wings: Wings | null;
-  mats: AnimalMats;
+  mats: AvatarMats;
+  rig: Rig;
 }
 
 export const DEFAULT_CHOICE: CharacterChoice = {
@@ -36,10 +38,12 @@ export function defaultColors(animal: AnimalId, wings: WingId): CharacterColors 
 /** Build an animal (optionally with wings) using the given colors. */
 export function buildCharacter(animal: AnimalId, wings: WingId | null, colors: CharacterColors): BuiltCharacter {
   const def = getAnimal(animal);
-  const mats = createAnimalMats(colors.body, colors.belly);
-  const group = def.build(mats);
-  const w = wings ? new Wings(group, wings, def.wingX, def.wingY, colors.wingLeft, colors.wingRight) : null;
-  return { group, wings: w, mats };
+  const mats = createAvatarMats(colors.body, colors.belly);
+  const rig = def.build(mats);
+  const a = rig.wingAnchor;
+  // Wings ride on the torso, so they bob and breathe with it
+  const w = wings ? new Wings(rig.body, wings, a.x, a.y, colors.wingLeft, colors.wingRight, a.z) : null;
+  return { group: rig.root, wings: w, mats, rig };
 }
 
 export function applyColors(c: BuiltCharacter, colors: CharacterColors) {

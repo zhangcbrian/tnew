@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Wings } from './wings';
+import { Animator } from './animator';
 import { buildCharacter, DEFAULT_CHOICE, type CharacterChoice } from './character';
 import { getTerrainHeightCached } from '../world/terrain';
 import { damp, dampAngle } from '../utils/math-helpers';
@@ -33,16 +34,10 @@ export class OtterController {
   private fallTime = 0;
   private time = 0;
 
-  private body: THREE.Mesh | null = null;
-  private tail: THREE.Mesh | null = null;
-  private legFL: THREE.Mesh | null = null;
-  private legFR: THREE.Mesh | null = null;
-  private legBL: THREE.Mesh | null = null;
-  private legBR: THREE.Mesh | null = null;
-  // Rest pose of animated parts, so animation offsets work for every animal.
-  private bodyRestY = 0;
-  private tailRestZ = 0;
-  private legRestX = [0, 0, 0, 0];
+  private animator!: Animator;
+  /** For working out climb and turn rates between frames */
+  private lastY = 0;
+  private lastHeading = 0;
 
   // Expose for camera
   get position(): THREE.Vector3 {
@@ -69,16 +64,7 @@ export class OtterController {
     const built = buildCharacter(choice.animal, choice.wings, choice.colors);
     this.model.add(built.group);
 
-    // Cache frequently-used sub-meshes to avoid per-frame scene graph searches.
-    this.body = this.model.getObjectByName('body') as THREE.Mesh | null;
-    this.tail = this.model.getObjectByName('tail') as THREE.Mesh | null;
-    this.legFL = this.model.getObjectByName('legFL') as THREE.Mesh | null;
-    this.legFR = this.model.getObjectByName('legFR') as THREE.Mesh | null;
-    this.legBL = this.model.getObjectByName('legBL') as THREE.Mesh | null;
-    this.legBR = this.model.getObjectByName('legBR') as THREE.Mesh | null;
-    this.bodyRestY = this.body?.position.y ?? 0;
-    this.tailRestZ = this.tail?.rotation.z ?? 0;
-    this.legRestX = [this.legFL, this.legFR, this.legBL, this.legBR].map((l) => l?.rotation.x ?? 0);
+    this.animator = new Animator(built.rig, built.wings);
 
     return built.wings!;
   }
@@ -270,50 +256,19 @@ export class OtterController {
     }
   }
 
-  private animate(time: number, _dt: number) {
-    const body = this.body;
-    const tail = this.tail;
-    const legFL = this.legFL;
-    const legFR = this.legFR;
-    const legBL = this.legBL;
-    const legBR = this.legBR;
-
-    switch (this.state) {
-      case 'IDLE':
-        this.animateIdle(time);
-        break;
-      case 'WALK':
-        // Body bob
-        if (body) body.position.y = this.bodyRestY + Math.sin(time * 10) * 0.03;
-        // Leg cycle
-        if (legFL) legFL.rotation.x = this.legRestX[0] + Math.sin(time * 10) * 0.4;
-        if (legFR) legFR.rotation.x = this.legRestX[1] + Math.sin(time * 10 + Math.PI) * 0.4;
-        if (legBL) legBL.rotation.x = this.legRestX[2] + Math.sin(time * 10 + Math.PI) * 0.4;
-        if (legBR) legBR.rotation.x = this.legRestX[3] + Math.sin(time * 10) * 0.4;
-        if (tail) tail.rotation.z = this.tailRestZ + Math.sin(time * 6) * 0.2;
-        this.wings.update(time, 0.2, false);
-        break;
-      case 'FLY':
-        // Tilt forward
-        if (body) body.position.y = this.bodyRestY;
-        // Legs tucked
-        if (legFL) legFL.rotation.x = this.legRestX[0] + 0.3;
-        if (legFR) legFR.rotation.x = this.legRestX[1] + 0.3;
-        if (legBL) legBL.rotation.x = this.legRestX[2] - 0.3;
-        if (legBR) legBR.rotation.x = this.legRestX[3] - 0.3;
-        if (tail) tail.rotation.z = this.tailRestZ + Math.sin(time * 4) * 0.15;
-        this.wings.update(time, 1.0, true);
-        break;
-      default:
-        this.animateIdle(time);
-    }
+  private animate(_time: number, dt: number) {
+    // Climb and turn rates drive flight posture (pitch, banking)
+    const climb = dt > 0 ? (this.model.position.y - this.lastY) / dt : 0;
+    let dh = this.heading - this.lastHeading;
+    dh = Math.atan2(Math.sin(dh), Math.cos(dh)); // wrap so crossing ±π isn't a full spin
+    const turn = dt > 0 ? dh / dt : 0;
+    this.lastY = this.model.position.y;
+    this.lastHeading = this.heading;
+    const speed = Math.hypot(this.velocity.x, this.velocity.z) / WALK_SPEED;
+    this.animator.update(dt, this.time, { speed, flying: this.state === 'FLY', climb, turn });
   }
 
-  private animateIdle(time: number) {
-    const body = this.body;
-    const tail = this.tail;
-    if (body) body.position.y = this.bodyRestY + Math.sin(time * 2) * 0.02;
-    if (tail) tail.rotation.z = this.tailRestZ + Math.sin(time * 3) * 0.15;
-    this.wings.update(time, 0.1, false);
+  private animateIdle(_time: number) {
+    this.animator.update(1 / 60, this.time, { speed: 0, flying: false, climb: 0, turn: 0 });
   }
 }

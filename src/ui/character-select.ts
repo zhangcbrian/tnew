@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { ANIMALS, type AnimalId } from '../character/animals';
 import { Wings, WING_TYPES, type WingId } from '../character/wings';
 import { buildCharacter, defaultColors } from '../character/character';
+import { Animator, type Motion } from '../character/animator';
+
+const IDLE: Motion = { speed: 0, flying: false, climb: 0, turn: 0 };
 import { previewRenderer } from './preview-renderer';
 
 export interface Selection {
@@ -53,12 +56,15 @@ export class CharacterSelect {
     previewRenderer.clear();
     for (const a of ANIMALS) {
       const built = buildCharacter(a.id, null, defaultColors(a.id, 'feathered'));
-      previewRenderer.add(this.viewOf(this.animalCards.get(a.id)!), built.group, this.scroll);
+      // Idle life on the card: breathing, blinking, glancing around
+      const animator = new Animator(built.rig, null);
+      previewRenderer.add(this.viewOf(this.animalCards.get(a.id)!), built.group, this.scroll,
+        (dt, t) => animator.update(dt, t, IDLE));
     }
     for (const w of WING_TYPES) {
       // Wings alone, spread as if flying and tipped toward the viewer.
       const holder = new THREE.Group();
-      new Wings(holder, w.id, 0.12, 0, w.color).update(0, 0, true);
+      new Wings(holder, w.id, 0.12, 0, w.color).pose(1);
       holder.rotation.x = 1.1;
       holder.position.y = 0.7;
       const stand = new THREE.Group();

@@ -7,6 +7,7 @@ interface View {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   pivot: THREE.Group;
+  onFrame?: (dt: number, time: number) => void;
 }
 
 const SPIN_SPEED = 0.6;
@@ -36,7 +37,7 @@ export class PreviewRenderer {
   }
 
   /** Show `object` spinning on a patch of grass inside `el`. Drawing is clipped to `clip`'s rectangle. */
-  add(el: HTMLElement, object: THREE.Object3D, clip?: HTMLElement) {
+  add(el: HTMLElement, object: THREE.Object3D, clip?: HTMLElement, onFrame?: (dt: number, time: number) => void) {
     const scene = new THREE.Scene();
     scene.add(new THREE.HemisphereLight(0xcfefff, 0x556b2f, 1.4));
     const sun = new THREE.DirectionalLight(0xfff5e6, 1.6);
@@ -59,7 +60,7 @@ export class PreviewRenderer {
     camera.lookAt(target);
 
     pivot.rotation.y = Math.random() * Math.PI * 2;
-    this.views.push({ el, clip, scene, camera, pivot });
+    this.views.push({ el, clip, scene, camera, pivot, onFrame });
   }
 
   /** Remove all views (call before rebuilding a screen). */
@@ -100,6 +101,7 @@ export class PreviewRenderer {
 
     for (const v of this.views) {
       v.pivot.rotation.y += dt * SPIN_SPEED;
+      v.onFrame?.(dt, this.clock.elapsedTime);
       if (!v.el.isConnected || v.el.offsetParent === null) continue;
       const rect = v.el.getBoundingClientRect();
       let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;

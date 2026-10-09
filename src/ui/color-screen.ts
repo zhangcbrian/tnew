@@ -4,6 +4,7 @@ import {
   applyColors, buildCharacter, defaultColors, type BuiltCharacter, type CharacterChoice, type CharacterColors,
 } from '../character/character';
 import { previewRenderer } from './preview-renderer';
+import { Animator } from '../character/animator';
 
 /** Color screen: four color slots, a live spinning preview, and a button that copies the left wing to the right. */
 export class ColorScreen {
@@ -55,10 +56,12 @@ export class ColorScreen {
     }
 
     this.built = buildCharacter(animal, wings, start);
-    this.built.wings!.update(0, 0, true);
+    this.built.wings!.pose(0.85); // spread, so both wing colors show
+    const animator = new Animator(this.built.rig, null);
     this.el.classList.add('visible');
     previewRenderer.clear();
-    previewRenderer.add(this.preview, this.built.group, this.scroll);
+    previewRenderer.add(this.preview, this.built.group, this.scroll,
+      (dt, t) => animator.update(dt, t, { speed: 0, flying: false, climb: 0, turn: 0 }));
     previewRenderer.start();
   }
 
