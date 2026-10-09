@@ -74,7 +74,8 @@ export class Weather {
    */
   update(dt: number, time: number, playerX: number, playerY: number, playerZ: number, rain = 0.5, snow = 0) {
     // Showers drift through; rainier landscapes get them more often and for longer.
-    const start = 0.75 - rain * 1.1;
+    // rain 0.5 (Highlands) starts showers at 0.35, exactly as before landscapes existed.
+    const start = 0.6 - rain * 0.5;
     this.intensity = rain <= 0.01 ? 0 : smoothstep(start, start + 0.4, octaveNoise(time * 0.02, 7.3, 2, 0.5, 2, 1));
     const highUp = playerY > 60 || snow > 0.5;
 

@@ -4,14 +4,16 @@ import { getTerrainHeightCached, CHUNK_SIZE } from './terrain';
 import { UNLOAD_RADIUS } from './chunk-manager';
 import { BIOMES, biomeWeights, type Biome, type PlantType } from './biomes';
 
-/** Enough slots for every chunk inside the unload radius, plus a margin. */
-const SLOTS = (() => {
+/** Most chunks a pool could ever need: every chunk inside the unload radius, plus a margin. */
+const MAX_SLOTS = (() => {
   let n = 0;
   for (let z = -UNLOAD_RADIUS; z <= UNLOAD_RADIUS; z++) {
     for (let x = -UNLOAD_RADIUS; x <= UNLOAD_RADIUS; x++) if (x * x + z * z <= UNLOAD_RADIUS * UNLOAD_RADIUS) n++;
   }
   return n + 16;
 })();
+/** Slots each pool starts with; enough for its landscape to fill the view near a region edge. */
+const INITIAL_SLOTS = 32;
 
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -28,27 +30,54 @@ function slopeAt(x: number, z: number): number {
  */
 class PlantPool {
   mesh: THREE.InstancedMesh;
+  private material: THREE.MeshStandardMaterial;
+  private capacity = 0;
   private free: number[] = [];
   private used = new Map<string, number>();
 
-  constructor(readonly type: PlantType, readonly biome: Biome) {
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
-    this.mesh = new THREE.InstancedMesh(type.geo, mat, SLOTS * type.perChunk);
-    this.mesh.name = type.name;
-    this.mesh.castShadow = type.shadow;
-    this.mesh.receiveShadow = true;
-    this.mesh.frustumCulled = false; // instances are spread across the whole view
+  constructor(readonly type: PlantType, readonly biome: Biome, private group: THREE.Group) {
+    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
+    // Start small: only landscapes near the player ever need slots. Grows on demand.
+    this.mesh = this.createMesh(INITIAL_SLOTS);
+    this.group.add(this.mesh);
+  }
+
+  private createMesh(slots: number): THREE.InstancedMesh {
+    const mesh = new THREE.InstancedMesh(this.type.geo, this.material, slots * this.type.perChunk);
+    mesh.name = this.type.name;
+    mesh.castShadow = this.type.shadow;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false; // instances are spread across the whole view
     const white = new THREE.Color(1, 1, 1);
-    for (let i = 0; i < SLOTS * type.perChunk; i++) {
-      this.mesh.setMatrixAt(i, HIDDEN);
-      this.mesh.setColorAt(i, white);
+    for (let i = this.capacity * this.type.perChunk; i < slots * this.type.perChunk; i++) {
+      mesh.setMatrixAt(i, HIDDEN);
+      mesh.setColorAt(i, white);
     }
-    for (let s = SLOTS - 1; s >= 0; s--) this.free.push(s);
-    this.updateCount();
+    for (let s = slots - 1; s >= this.capacity; s--) this.free.push(s);
+    this.capacity = slots;
+    return mesh;
+  }
+
+  /** Double the pool (up to MAX_SLOTS), keeping every instance already placed. */
+  private grow(): boolean {
+    if (this.capacity >= MAX_SLOTS) return false;
+    const old = this.mesh;
+    const oldCount = this.capacity * this.type.perChunk;
+    const next = this.createMesh(Math.min(this.capacity * 2, MAX_SLOTS));
+    (next.instanceMatrix.array as Float32Array).set((old.instanceMatrix.array as Float32Array).subarray(0, oldCount * 16));
+    if (old.instanceColor && next.instanceColor) {
+      (next.instanceColor.array as Float32Array).set((old.instanceColor.array as Float32Array).subarray(0, oldCount * 3));
+    }
+    this.group.remove(old);
+    old.dispose(); // frees its instance buffers; geometry and material are shared and kept
+    this.group.add(next);
+    this.mesh = next;
+    return true;
   }
 
   /** Write a chunk's instances (matrices + tints). Returns false if the pool is full. */
   fill(key: string, matrices: THREE.Matrix4[], tints: THREE.Color[]): boolean {
+    if (this.free.length === 0 && !this.grow()) return false;
     this.free.sort((a, b) => b - a); // lowest free slot first, keeping used slots packed
     const slot = this.free.pop();
     if (slot === undefined) return false;
@@ -105,9 +134,7 @@ export class Vegetation {
   constructor() {
     for (const biome of BIOMES) {
       for (const type of biome.plants) {
-        const pool = new PlantPool(type, biome);
-        this.pools.push(pool);
-        this.group.add(pool.mesh);
+        this.pools.push(new PlantPool(type, biome, this.group));
       }
     }
   }
