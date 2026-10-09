@@ -226,6 +226,7 @@ export class Game {
       this.input.wantFly,
       this.input.wantDescend,
       this.cameraSystem.cameraYaw,
+      this.building,
     );
 
     // Shoot rocket
@@ -252,8 +253,16 @@ export class Game {
     const selectNum = this.input.consumeSelectBlock();
     if (selectNum >= 0) this.building.selectBlock(selectNum);
     if (this.input.consumePlaceBlock()) {
-      this.building.updatePreview(this.cameraSystem.camera, this.otter.position);
-      this.building.placeBlock();
+      const pos = this.otter.position;
+      this.building.updatePreview(this.cameraSystem.camera, pos, this.chunkManager.nearbyMeshes(pos.x, pos.z));
+      // Blocks are solid, so never place one on top of the player or a creature.
+      this.building.placeBlock((minX, minY, minZ, maxX, maxY, maxZ) => {
+        const cx = (minX + maxX) / 2;
+        const cz = (minZ + maxZ) / 2;
+        return this.otter.overlaps(minX, minY, minZ, maxX, maxY, maxZ)
+          || this.animals.isNear(cx, minY, cz, 1.2)
+          || this.people.isNear(cx, minY, cz, 1.2);
+      });
     }
     this.building.hidePreview();
     if (this.input.consumeRemoveBlock()) this.building.removeBlock(this.cameraSystem.camera);
@@ -267,7 +276,7 @@ export class Game {
     this.water.update(time, this.otter.position.x, this.otter.position.z);
     this.skybox.update(this.cameraSystem.camera.position);
     this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z);
-    this.animals.update(dt, time, this.otter.position);
+    this.animals.update(dt, time, this.otter.position, this.building);
     this.people.update(dt, time, this.otter.position, this.otter.heading);
 
     // Shadow follows player
@@ -323,6 +332,7 @@ export class Game {
         this.loadingScreen.setProgress(0.97, 'Setting up building...');
         this.building = new BuildingSystem();
         this.scene.add(this.building.group);
+        this.people.blocks = this.building;
         this.loadPhase = 8;
         break;
       case 8:

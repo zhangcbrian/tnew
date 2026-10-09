@@ -4,6 +4,7 @@ import { buildCharacter, DEFAULT_CHOICE, type CharacterChoice } from './characte
 import { getTerrainHeightCached } from '../world/terrain';
 import { damp, dampAngle } from '../utils/math-helpers';
 import { disposeObject } from '../utils/dispose';
+import { type BlockQuery, NO_BLOCKS } from '../world/block-query';
 
 export type OtterState = 'IDLE' | 'WALK' | 'FLY' | 'FALL' | 'GAME_OVER';
 
@@ -15,6 +16,11 @@ const FLY_DESCEND_SPEED = 12;
 const FALL_ACCEL = 15;
 const MAX_FALL_SPEED = 60;
 const TURN_SPEED = 8;
+// Collision box against placed blocks
+const HALF_WIDTH = 0.4;
+const BODY_HEIGHT = 1.2;
+/** Walking automatically climbs onto anything this high or lower. */
+const STEP_UP = 0.5;
 
 export class OtterController {
   model: THREE.Group;
@@ -95,6 +101,7 @@ export class OtterController {
     wantFly: boolean,             // space held
     wantDescend: boolean,         // shift held
     cameraYaw: number,            // camera's horizontal angle
+    blocks: BlockQuery = NO_BLOCKS,
   ) {
     this.time += dt;
 
@@ -149,12 +156,28 @@ export class OtterController {
       this.velocity.z = damp(this.velocity.z, 0, 10, dt);
     }
 
-    // Position
-    this.model.position.x += this.velocity.x * dt;
-    this.model.position.z += this.velocity.z * dt;
+    // Position: move one axis at a time so walking into a block slides along it
+    const pos = this.model.position;
+    // Walking can step up onto anything up to STEP_UP high; flying can't pass through anything.
+    const feet = pos.y + (isFlying ? 0.05 : STEP_UP);
+    const nx = pos.x + this.velocity.x * dt;
+    if (blocks.boxHits(nx - HALF_WIDTH, feet, pos.z - HALF_WIDTH, nx + HALF_WIDTH, pos.y + BODY_HEIGHT, pos.z + HALF_WIDTH)) {
+      this.velocity.x = 0;
+    } else {
+      pos.x = nx;
+    }
+    const nz = pos.z + this.velocity.z * dt;
+    if (blocks.boxHits(pos.x - HALF_WIDTH, feet, nz - HALF_WIDTH, pos.x + HALF_WIDTH, pos.y + BODY_HEIGHT, nz + HALF_WIDTH)) {
+      this.velocity.z = 0;
+    } else {
+      pos.z = nz;
+    }
 
-    // Height
-    const terrainH = getTerrainHeightCached(this.model.position.x, this.model.position.z);
+    // Height: the ground is the terrain or the top of a block we're standing on
+    const terrainH = Math.max(
+      getTerrainHeightCached(pos.x, pos.z),
+      this.blockSupport(blocks, pos.x, pos.z, pos.y + STEP_UP),
+    );
 
     if (this.state === 'FLY') {
       if (wantFly) {
@@ -169,7 +192,13 @@ export class OtterController {
         this.flyHeight = 0;
         this.state = isMoving ? 'WALK' : 'IDLE';
       } else {
-        this.model.position.y = damp(this.model.position.y, this.flyHeight, 6, dt);
+        const newY = damp(pos.y, this.flyHeight, 6, dt);
+        // Flying up into the underside of a block stops the climb
+        if (newY > pos.y && blocks.boxHits(pos.x - HALF_WIDTH, newY, pos.z - HALF_WIDTH, pos.x + HALF_WIDTH, newY + BODY_HEIGHT, pos.z + HALF_WIDTH)) {
+          this.flyHeight = pos.y;
+        } else {
+          pos.y = newY;
+        }
       }
     } else {
       // Stick to terrain smoothly - no gravity bounce
@@ -187,6 +216,25 @@ export class OtterController {
 
     // Animations
     this.animate(this.time, dt);
+  }
+
+  /** Highest block top under any corner of the player's footprint (at or below maxY). */
+  private blockSupport(blocks: BlockQuery, x: number, z: number, maxY: number): number {
+    let best = -Infinity;
+    for (const dx of [-HALF_WIDTH, HALF_WIDTH]) {
+      for (const dz of [-HALF_WIDTH, HALF_WIDTH]) {
+        best = Math.max(best, blocks.supportHeight(x + dx, z + dz, maxY));
+      }
+    }
+    return best;
+  }
+
+  /** Does the player's body overlap this box? Used to refuse placing a block on them. */
+  overlaps(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): boolean {
+    const p = this.model.position;
+    return p.x + HALF_WIDTH > minX && p.x - HALF_WIDTH < maxX
+      && p.y + BODY_HEIGHT > minY && p.y < maxY
+      && p.z + HALF_WIDTH > minZ && p.z - HALF_WIDTH < maxZ;
   }
 
   private updateFalling(dt: number) {

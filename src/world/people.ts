@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getTerrainHeightCached } from './terrain';
+import { type BlockQuery, NO_BLOCKS } from './block-query';
 
 const PERSON_COUNT = 230;
 const WANDER_SPEED = 1.0;
@@ -175,6 +176,8 @@ export class People {
 
   private dummy = new THREE.Object3D();
   private colorTmp = new THREE.Color();
+  /** Placed blocks; people walk around them. */
+  blocks: BlockQuery = NO_BLOCKS;
 
   constructor() {
     const geometry = createPersonGeometry();
@@ -467,10 +470,13 @@ export class People {
     p.heading = Math.atan2(dx, dz);
     const moveX = Math.sin(p.heading) * CHASE_SPEED * dt;
     const moveZ = Math.cos(p.heading) * CHASE_SPEED * dt;
-    p.x += moveX;
-    p.z += moveZ;
+    // Blocks stop chasers; they have to find a way around
+    if (!this.blocks.isSolid(p.x + moveX, p.y + 0.5, p.z + moveZ)) {
+      p.x += moveX;
+      p.z += moveZ;
+    }
 
-    const th = getTerrainHeightCached(p.x, p.z);
+    const th = this.groundAt(p.x, p.z, p.y);
     if (th >= 0.5) {
       p.y = th;
     }
@@ -508,9 +514,10 @@ export class People {
     p.x += moveX;
     p.z += moveZ;
 
-    const th = getTerrainHeightCached(p.x, p.z);
-    if (th < 0.5) {
-      p.heading += Math.PI * 0.5;
+    const th = this.groundAt(p.x, p.z, p.y);
+    if (th < 0.5 || this.blocks.isSolid(p.x, p.y + 0.5, p.z)) {
+      // Water or a block ahead: back off and turn away
+      p.heading += Math.PI * (0.5 + Math.random() * 0.5);
       p.x -= moveX;
       p.z -= moveZ;
     } else {
@@ -563,6 +570,22 @@ export class People {
     p.fleePhase = 0;
     p.stackSlot = -1;
     return true;
+  }
+
+  /** Terrain height, or the top of a block that someone at height y could step onto. */
+  private groundAt(x: number, z: number, y: number): number {
+    return Math.max(getTerrainHeightCached(x, z), this.blocks.supportHeight(x, z, y + 0.6));
+  }
+
+  /** Is any walking person within r of the point? */
+  isNear(x: number, y: number, z: number, r = 1): boolean {
+    for (let i = 0; i < this.mesh.count; i++) {
+      const p = this.data[i];
+      if (p.state === 'DEAD' || p.state === 'RIDING') continue;
+      const dx = p.x - x, dy = p.y - y, dz = p.z - z;
+      if (dx * dx + dy * dy + dz * dz < r * r) return true;
+    }
+    return false;
   }
 
   repelAll(originX: number, originZ: number) {
