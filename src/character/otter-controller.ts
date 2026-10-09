@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { createOtter } from './otter';
 import { Wings } from './wings';
+import { buildCharacter, DEFAULT_CHOICE, type CharacterChoice } from './character';
 import { getTerrainHeightCached } from '../world/terrain';
 import { isOutsideBorder, getBorderRadius } from '../world/cactus-border';
 import { damp, dampAngle } from '../utils/math-helpers';
@@ -33,6 +33,10 @@ export class OtterController {
   private legFR: THREE.Mesh | null = null;
   private legBL: THREE.Mesh | null = null;
   private legBR: THREE.Mesh | null = null;
+  // Rest pose of animated parts, so animation offsets work for every animal.
+  private bodyRestY = 0;
+  private tailRestZ = 0;
+  private legRestX = [0, 0, 0, 0];
 
   // Expose for camera
   get position(): THREE.Vector3 {
@@ -40,8 +44,23 @@ export class OtterController {
   }
 
   constructor() {
-    this.model = createOtter();
-    this.wings = new Wings(this.model);
+    this.model = new THREE.Group();
+    this.model.name = 'player';
+    this.wings = this.attach(DEFAULT_CHOICE);
+
+    this.model.position.set(0, getTerrainHeightCached(0, 0) + 0.1, 0);
+  }
+
+  /** Replace the player's animal, wings and colors, keeping position and state. */
+  setCharacter(choice: CharacterChoice) {
+    this.wings.dispose();
+    this.model.clear();
+    this.wings = this.attach(choice);
+  }
+
+  private attach(choice: CharacterChoice): Wings {
+    const built = buildCharacter(choice.animal, choice.wings, choice.colors);
+    this.model.add(built.group);
 
     // Cache frequently-used sub-meshes to avoid per-frame scene graph searches.
     this.body = this.model.getObjectByName('body') as THREE.Mesh | null;
@@ -50,8 +69,11 @@ export class OtterController {
     this.legFR = this.model.getObjectByName('legFR') as THREE.Mesh | null;
     this.legBL = this.model.getObjectByName('legBL') as THREE.Mesh | null;
     this.legBR = this.model.getObjectByName('legBR') as THREE.Mesh | null;
+    this.bodyRestY = this.body?.position.y ?? 0;
+    this.tailRestZ = this.tail?.rotation.z ?? 0;
+    this.legRestX = [this.legFL, this.legFR, this.legBL, this.legBR].map((l) => l?.rotation.x ?? 0);
 
-    this.model.position.set(0, getTerrainHeightCached(0, 0) + 0.1, 0);
+    return built.wings!;
   }
 
   respawn() {
@@ -219,24 +241,24 @@ export class OtterController {
         break;
       case 'WALK':
         // Body bob
-        if (body) body.position.y = 0.5 + Math.sin(time * 10) * 0.03;
+        if (body) body.position.y = this.bodyRestY + Math.sin(time * 10) * 0.03;
         // Leg cycle
-        if (legFL) legFL.rotation.x = Math.sin(time * 10) * 0.4 + 0.2;
-        if (legFR) legFR.rotation.x = Math.sin(time * 10 + Math.PI) * 0.4 + 0.2;
-        if (legBL) legBL.rotation.x = Math.sin(time * 10 + Math.PI) * 0.4 - 0.2;
-        if (legBR) legBR.rotation.x = Math.sin(time * 10) * 0.4 - 0.2;
-        if (tail) tail.rotation.z = Math.sin(time * 6) * 0.2;
+        if (legFL) legFL.rotation.x = this.legRestX[0] + Math.sin(time * 10) * 0.4;
+        if (legFR) legFR.rotation.x = this.legRestX[1] + Math.sin(time * 10 + Math.PI) * 0.4;
+        if (legBL) legBL.rotation.x = this.legRestX[2] + Math.sin(time * 10 + Math.PI) * 0.4;
+        if (legBR) legBR.rotation.x = this.legRestX[3] + Math.sin(time * 10) * 0.4;
+        if (tail) tail.rotation.z = this.tailRestZ + Math.sin(time * 6) * 0.2;
         this.wings.update(time, 0.2, false);
         break;
       case 'FLY':
         // Tilt forward
-        if (body) body.position.y = 0.5;
+        if (body) body.position.y = this.bodyRestY;
         // Legs tucked
-        if (legFL) legFL.rotation.x = 0.5;
-        if (legFR) legFR.rotation.x = 0.5;
-        if (legBL) legBL.rotation.x = -0.5;
-        if (legBR) legBR.rotation.x = -0.5;
-        if (tail) tail.rotation.z = Math.sin(time * 4) * 0.15;
+        if (legFL) legFL.rotation.x = this.legRestX[0] + 0.3;
+        if (legFR) legFR.rotation.x = this.legRestX[1] + 0.3;
+        if (legBL) legBL.rotation.x = this.legRestX[2] - 0.3;
+        if (legBR) legBR.rotation.x = this.legRestX[3] - 0.3;
+        if (tail) tail.rotation.z = this.tailRestZ + Math.sin(time * 4) * 0.15;
         this.wings.update(time, 1.0, true);
         break;
       default:
@@ -247,8 +269,8 @@ export class OtterController {
   private animateIdle(time: number) {
     const body = this.body;
     const tail = this.tail;
-    if (body) body.position.y = 0.5 + Math.sin(time * 2) * 0.02;
-    if (tail) tail.rotation.z = Math.sin(time * 3) * 0.15;
+    if (body) body.position.y = this.bodyRestY + Math.sin(time * 2) * 0.02;
+    if (tail) tail.rotation.z = this.tailRestZ + Math.sin(time * 3) * 0.15;
     this.wings.update(time, 0.1, false);
   }
 }
