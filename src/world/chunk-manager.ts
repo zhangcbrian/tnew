@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { createTerrainChunk, forgetChunkHeights, CHUNK_SIZE } from './terrain';
+import { buildChunkGeometry, storeChunkHeights, forgetChunkHeights, terrainMaterial, CHUNK_SIZE } from './terrain';
+import { ChunkWorkers } from './chunk-workers';
+import type { ChunkData, PlantData } from './chunk-gen';
 
 const VIEW_DISTANCE = 500;
 /** Chunks within this many chunks of the player are kept loaded. */
@@ -7,10 +9,24 @@ export const LOAD_RADIUS = Math.ceil(VIEW_DISTANCE / CHUNK_SIZE);
 /** Chunks are only unloaded past this radius, so walking back and forth doesn't thrash. */
 export const UNLOAD_RADIUS = LOAD_RADIUS + 2;
 
+/** Terrain detail by distance: every vertex near the player, every 2nd / 4th further out. */
+function lodStep(dxChunks: number, dzChunks: number): number {
+  const d = Math.sqrt(dxChunks * dxChunks + dzChunks * dzChunks) * CHUNK_SIZE - CHUNK_SIZE / 2;
+  if (d < 200) return 1;
+  if (d < 350) return 2;
+  return 4;
+}
+
+/** Most finished chunks turned into meshes per frame (GPU uploads), and LOD rebuilds per frame. */
+const APPLY_PER_FRAME = 3;
+const LOD_REBUILDS_PER_FRAME = 4;
+
 type ChunkRecord = {
   cx: number;
   cz: number;
   mesh: THREE.Mesh;
+  data: ChunkData;
+  step: number;
 };
 
 const keyOf = (cx: number, cz: number) => `${cx},${cz}`;
@@ -20,19 +36,25 @@ export function chunkCoord(v: number): number {
 }
 
 /**
- * Streams terrain chunks around the player: nearest missing chunks are built a few per
- * frame, far chunks are freed. Other systems hook in through onLoad / onUnload.
+ * Streams terrain chunks around the player. Chunks are built by web workers (nearest first);
+ * the main thread only uploads finished ones, a few per frame, and frees far chunks.
+ * Other systems hook in through onLoad / onUnload.
  */
 export class ChunkManager {
   group = new THREE.Group();
   private chunks = new Map<string, ChunkRecord>();
+  private requested = new Set<string>();
+  private workers = new ChunkWorkers();
   private lastCx = Number.NaN;
   private lastCz = Number.NaN;
+  private lastRadius = 0;
   /** Missing chunks within LOAD_RADIUS, nearest first. Rebuilt when the player changes chunk. */
   private queue: [number, number][] = [];
+  /** Chunks whose detail level needs rebuilding after the player moved. */
+  private lodQueue: string[] = [];
 
   constructor(
-    private onLoad: (cx: number, cz: number) => void = () => {},
+    private onLoad: (cx: number, cz: number, plants: PlantData[]) => void = () => {},
     private onUnload: (cx: number, cz: number) => void = () => {},
   ) {}
 
@@ -40,15 +62,16 @@ export class ChunkManager {
     return this.chunks.size;
   }
 
-  setCallbacks(onLoad: (cx: number, cz: number) => void, onUnload: (cx: number, cz: number) => void) {
+  setCallbacks(onLoad: (cx: number, cz: number, plants: PlantData[]) => void, onUnload: (cx: number, cz: number) => void) {
     this.onLoad = onLoad;
     this.onUnload = onUnload;
     // Let late subscribers catch up on chunks that already exist.
-    for (const rec of this.chunks.values()) onLoad(rec.cx, rec.cz);
+    for (const rec of this.chunks.values()) onLoad(rec.cx, rec.cz, rec.data.plants);
   }
 
-  /** Build up to `budget` chunks within `radius` of (px, pz). Returns progress 0..1. */
-  preload(px: number, pz: number, radius: number, budget: number): number {
+  /** Load the area within `radius` chunks of (px, pz). Returns progress 0..1 (call every frame). */
+  preload(px: number, pz: number, radius: number): number {
+    this.update(px, pz, radius, 8);
     const pcx = chunkCoord(px);
     const pcz = chunkCoord(pz);
     let total = 0;
@@ -57,36 +80,55 @@ export class ChunkManager {
       for (let dx = -radius; dx <= radius; dx++) {
         if (dx * dx + dz * dz > radius * radius) continue;
         total++;
-        const cx = pcx + dx;
-        const cz = pcz + dz;
-        if (this.chunks.has(keyOf(cx, cz))) {
-          done++;
-        } else if (budget > 0) {
-          this.load(cx, cz);
-          budget--;
-          done++;
-        }
+        if (this.chunks.has(keyOf(pcx + dx, pcz + dz))) done++;
       }
     }
     return done / total;
   }
 
-  update(px: number, pz: number, budget = 2) {
+  update(px: number, pz: number, radius = LOAD_RADIUS, applyBudget = APPLY_PER_FRAME) {
     const pcx = chunkCoord(px);
     const pcz = chunkCoord(pz);
 
-    if (pcx !== this.lastCx || pcz !== this.lastCz) {
+    if (pcx !== this.lastCx || pcz !== this.lastCz || radius !== this.lastRadius) {
       this.lastCx = pcx;
       this.lastCz = pcz;
+      this.lastRadius = radius;
       this.unloadFar(pcx, pcz);
-      this.rebuildQueue(pcx, pcz);
+      this.rebuildQueue(pcx, pcz, radius);
+      this.lodQueue = [...this.chunks.keys()];
     }
 
-    while (budget > 0 && this.queue.length > 0) {
+    // Keep the workers fed, nearest chunks first
+    while (this.queue.length > 0 && this.workers.inFlight < this.workers.capacity) {
       const [cx, cz] = this.queue.shift()!;
-      if (this.chunks.has(keyOf(cx, cz))) continue;
-      this.load(cx, cz);
-      budget--;
+      const key = keyOf(cx, cz);
+      if (this.chunks.has(key) || this.requested.has(key)) continue;
+      this.requested.add(key);
+      this.workers.request(cx, cz);
+    }
+
+    // Upload finished chunks; drop any the player has already left behind
+    for (const data of this.workers.take(applyBudget)) {
+      const key = keyOf(data.cx, data.cz);
+      this.requested.delete(key);
+      const dx = data.cx - pcx;
+      const dz = data.cz - pcz;
+      if (this.chunks.has(key) || dx * dx + dz * dz > UNLOAD_RADIUS * UNLOAD_RADIUS) continue;
+      this.load(data, pcx, pcz);
+    }
+
+    // Re-detail chunks whose distance band changed
+    let rebuilds = LOD_REBUILDS_PER_FRAME;
+    while (rebuilds > 0 && this.lodQueue.length > 0) {
+      const rec = this.chunks.get(this.lodQueue.pop()!);
+      if (!rec) continue;
+      const step = lodStep(rec.cx - pcx, rec.cz - pcz);
+      if (step === rec.step) continue;
+      rec.mesh.geometry.dispose();
+      rec.mesh.geometry = buildChunkGeometry(rec.data, step);
+      rec.step = step;
+      rebuilds--;
     }
   }
 
@@ -104,11 +146,15 @@ export class ChunkManager {
     return out;
   }
 
-  private load(cx: number, cz: number) {
-    const mesh = createTerrainChunk(cx, cz);
-    this.chunks.set(keyOf(cx, cz), { cx, cz, mesh });
+  private load(data: ChunkData, pcx: number, pcz: number) {
+    const step = lodStep(data.cx - pcx, data.cz - pcz);
+    const mesh = new THREE.Mesh(buildChunkGeometry(data, step), terrainMaterial);
+    mesh.position.set(data.cx * CHUNK_SIZE, 0, data.cz * CHUNK_SIZE);
+    mesh.receiveShadow = true;
+    storeChunkHeights(data.cx, data.cz, data.heights);
+    this.chunks.set(keyOf(data.cx, data.cz), { cx: data.cx, cz: data.cz, mesh, data, step });
     this.group.add(mesh);
-    this.onLoad(cx, cz);
+    this.onLoad(data.cx, data.cz, data.plants);
   }
 
   private unloadFar(pcx: number, pcz: number) {
@@ -125,14 +171,15 @@ export class ChunkManager {
     }
   }
 
-  private rebuildQueue(pcx: number, pcz: number) {
-    const r2 = LOAD_RADIUS * LOAD_RADIUS;
+  private rebuildQueue(pcx: number, pcz: number, radius: number) {
+    const r2 = radius * radius;
     const missing: [number, number, number][] = [];
-    for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
-      for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
         const d2 = dx * dx + dz * dz;
         if (d2 > r2) continue;
-        if (this.chunks.has(keyOf(pcx + dx, pcz + dz))) continue;
+        const key = keyOf(pcx + dx, pcz + dz);
+        if (this.chunks.has(key) || this.requested.has(key)) continue;
         missing.push([pcx + dx, pcz + dz, d2]);
       }
     }

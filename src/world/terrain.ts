@@ -3,8 +3,9 @@ import { biomeWeights } from './biomes';
 import { smoothstep, lerp } from '../utils/math-helpers';
 
 export const CHUNK_SIZE = 64;
-const HEIGHT_SEGMENTS = 32;
+export const HEIGHT_SEGMENTS = 32;
 export const WATER_LEVEL = 0;
+
 // Heightfield cache populated as terrain chunks are generated. This lets runtime
 // systems (player/AI/camera) query terrain heights without recomputing noise.
 const chunkHeights = new Map<string, Float32Array>();
@@ -85,7 +86,7 @@ export const terrainMaterial = new THREE.MeshStandardMaterial({
 
 const blendTmp = new THREE.Color();
 
-function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
+export function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
   const slope = 1 - normal.y;
   const weights = biomeWeights(x, z);
   if (weights.length === 1) {
@@ -102,62 +103,77 @@ function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vec
   return tmpColor;
 }
 
-export function createTerrainChunk(
-  chunkX: number,
-  chunkZ: number,
-): THREE.Mesh {
-  const segments = HEIGHT_SEGMENTS;
-  const geometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, segments, segments);
-  geometry.rotateX(-Math.PI / 2);
-
-  const positions = geometry.attributes.position;
-  const heights = new Float32Array(positions.count);
-  const colors = new Float32Array(positions.count * 3);
-
-  const offsetX = chunkX * CHUNK_SIZE;
-  const offsetZ = chunkZ * CHUNK_SIZE;
-
-  // Displace heights
-  for (let i = 0; i < positions.count; i++) {
-    const wx = positions.getX(i) + offsetX;
-    const wz = positions.getZ(i) + offsetZ;
-    const h = getTerrainHeight(wx, wz);
-    positions.setY(i, h);
-    heights[i] = h;
-  }
-
-  // Normals from the height function itself (not per-chunk geometry), so neighboring
-  // chunks light identically along their shared edges — no visible seams.
-  const normals = geometry.attributes.normal;
-  for (let i = 0; i < positions.count; i++) {
-    const wx = positions.getX(i) + offsetX;
-    const wz = positions.getZ(i) + offsetZ;
-    const dx = getTerrainHeight(wx + 1, wz) - getTerrainHeight(wx - 1, wz);
-    const dz = getTerrainHeight(wx, wz + 1) - getTerrainHeight(wx, wz - 1);
-    const len = Math.sqrt(dx * dx + dz * dz + 4);
-    normals.setXYZ(i, -dx / len, 2 / len, -dz / len);
-  }
-  normals.needsUpdate = true;
+/** Store a chunk's full-resolution heights for gameplay lookups. */
+export function storeChunkHeights(chunkX: number, chunkZ: number, heights: Float32Array) {
   chunkHeights.set(`${chunkX},${chunkZ}`, heights);
+}
 
-  // Vertex colors
-  const tmpNormal = new THREE.Vector3();
-  for (let i = 0; i < positions.count; i++) {
-    const wx = positions.getX(i) + offsetX;
-    const wz = positions.getZ(i) + offsetZ;
-    const wy = positions.getY(i);
-    tmpNormal.set(normals.getX(i), normals.getY(i), normals.getZ(i));
-    const color = getTerrainColor(wx, wz, wy, tmpNormal);
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
+/** How far the edge skirt hangs down; hides cracks between chunks drawn at different detail. */
+const SKIRT_DROP = 4;
+
+/**
+ * Terrain geometry for a chunk, using every `step`-th vertex of its full-resolution data
+ * (1 = full detail, 2 = half, 4 = quarter), plus a skirt around the edge.
+ */
+export function buildChunkGeometry(data: { heights: Float32Array; normals: Float32Array; colors: Float32Array }, step: number): THREE.BufferGeometry {
+  const row = HEIGHT_SEGMENTS + 1;
+  const n = HEIGHT_SEGMENTS / step; // cells per side
+  const side = n + 1;
+  const cell = CHUNK_SIZE / n;
+  const half = CHUNK_SIZE / 2;
+
+  // Edge vertices, walked around the perimeter, each get a dropped copy for the skirt.
+  const edge: [number, number][] = [];
+  for (let i = 0; i < n; i++) edge.push([i, 0]);
+  for (let j = 0; j < n; j++) edge.push([n, j]);
+  for (let i = n; i > 0; i--) edge.push([i, n]);
+  for (let j = n; j > 0; j--) edge.push([0, j]);
+
+  const count = side * side + edge.length;
+  const pos = new Float32Array(count * 3);
+  const nor = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+
+  const put = (v: number, i: number, j: number, drop: number) => {
+    const src = i * step + j * step * row;
+    pos[v * 3] = -half + i * cell;
+    pos[v * 3 + 1] = data.heights[src] - drop;
+    pos[v * 3 + 2] = -half + j * cell;
+    for (let c = 0; c < 3; c++) {
+      nor[v * 3 + c] = data.normals[src * 3 + c];
+      col[v * 3 + c] = data.colors[src * 3 + c];
+    }
+  };
+  for (let j = 0; j < side; j++) for (let i = 0; i < side; i++) put(i + j * side, i, j, 0);
+  edge.forEach(([i, j], e) => put(side * side + e, i, j, SKIRT_DROP));
+
+  const index: number[] = [];
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const a = i + j * side;
+      const b = i + (j + 1) * side;
+      const c = i + 1 + (j + 1) * side;
+      const d = i + 1 + j * side;
+      index.push(a, b, d, b, c, d);
+    }
+  }
+  // Skirt: a strip from each edge vertex down to its dropped copy, drawn from both sides.
+  for (let e = 0; e < edge.length; e++) {
+    const [i0, j0] = edge[e];
+    const [i1, j1] = edge[(e + 1) % edge.length];
+    const top0 = i0 + j0 * side;
+    const top1 = i1 + j1 * side;
+    const low0 = side * side + e;
+    const low1 = side * side + ((e + 1) % edge.length);
+    index.push(top0, low0, top1, top1, low0, low1);
+    index.push(top0, top1, low0, top1, low1, low0);
   }
 
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-  const mesh = new THREE.Mesh(geometry, terrainMaterial);
-  mesh.position.set(offsetX, 0, offsetZ);
-  mesh.receiveShadow = true;
-  mesh.castShadow = false;
-  return mesh;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(index);
+  geo.computeBoundingSphere();
+  return geo;
 }
