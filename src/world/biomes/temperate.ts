@@ -81,20 +81,21 @@ export const fjords: Biome = {
   },
   color(x, z, h, slope, out) {
     if (h < -0.5) { out.copy(FJORD_BED); return; }
-    out.lerpColors(FJORD_GREEN, FJORD_ROCK, smoothstep(55, 90, h));
-    out.lerp(FJORD_ROCK, smoothstep(0.35, 0.55, slope));
+    // Green, forested lower slopes; bare rock only on the high tops and real cliffs
+    out.lerpColors(FJORD_GREEN, FJORD_ROCK, smoothstep(75, 105, h));
+    out.lerp(FJORD_ROCK, smoothstep(0.55, 0.75, slope));
     out.lerp(SNOW, smoothstep(100, 115, h + octaveNoise(x, z, 2, 0.5, 2, 0.02) * 8) * (1 - smoothstep(0.5, 0.65, slope)));
     out.offsetHSL(0, 0, octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.04);
   },
   plants: [
-    { name: 'fjord-spruce', geo: P.spruce(), perChunk: 30, shadow: true, scale: [0.7, 1.3],
-      fits: (h, s, x, z) => h > 1 && h < 70 && s < 0.45 && octaveNoise(x, z, 2, 0.5, 2, 0.012) > 0 },
+    { name: 'fjord-spruce', geo: P.spruce(), perChunk: 36, shadow: true, scale: [0.7, 1.3],
+      fits: (h, s, x, z) => h > 1 && h < 85 && s < 0.6 && octaveNoise(x, z, 2, 0.5, 2, 0.012) > -0.25 },
     { name: 'fjord-birch', geo: P.birch(), perChunk: 8, shadow: false, scale: [0.8, 1.2],
       fits: (h, s, _x, _z, r) => h > 1 && h < 40 && s < 0.35 && r < 0.4 },
     { name: 'fjord-boulder', geo: P.boulder(0x75787a), perChunk: 10, shadow: false, scale: [0.5, 2.2],
       fits: (h, s) => h > 0.3 && s < 0.75 },
     { name: 'fjord-grass', geo: P.grassTuft(0x5f8a3f), perChunk: 30, shadow: false, scale: [0.8, 1.5],
-      fits: (h, s) => h > 0.6 && h < 60 && s < 0.4 },
+      fits: (h, s) => h > 0.6 && h < 80 && s < 0.55 },
   ],
   climate: { skyTop: 0x4f7fb8, skyBottom: 0xc4d4e2, fog: 0xaebfcf, fogNear: 160, fogFar: 560, water: 0x24485c, waterOpacity: 0.85, rain: 0.45, snow: false },
 };
