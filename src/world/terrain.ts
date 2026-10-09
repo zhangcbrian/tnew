@@ -1,53 +1,60 @@
 import * as THREE from 'three';
-import { octaveNoise } from '../utils/noise';
-import { smoothstep, clamp } from '../utils/math-helpers';
+import { octaveNoise, ridgedNoise } from '../utils/noise';
+import { smoothstep, lerp } from '../utils/math-helpers';
 
-export const WORLD_SIZE = 2048;
 export const CHUNK_SIZE = 64;
-export const HALF_WORLD = WORLD_SIZE / 2;
 const HEIGHT_SEGMENTS = 32;
-const MAX_HEIGHT = 30;
-const WATER_LEVEL = 0;
+export const WATER_LEVEL = 0;
+const SNOW_LINE = 72;
 
-const COLOR_GRASS = new THREE.Color(0x4a8c3f);
-const COLOR_DIRT = new THREE.Color(0x8b6914);
-const COLOR_ROCK = new THREE.Color(0x777788);
-const COLOR_SAND = new THREE.Color(0xc2b280);
-const COLOR_SNOW = new THREE.Color(0xe8e8f0);
-
-const COLOR_SURREAL_1 = new THREE.Color(0x9b59b6);
-const COLOR_SURREAL_2 = new THREE.Color(0x00bcd4);
-const COLOR_SURREAL_3 = new THREE.Color(0xff6f61);
-const COLOR_SURREAL_4 = new THREE.Color(0xf39c12);
+// Scottish Highlands palette
+const COLOR_PEAT = new THREE.Color(0x3b3226);
+const COLOR_SHINGLE = new THREE.Color(0x8a8272);
+const COLOR_MOOR = new THREE.Color(0x7a8450);
+const COLOR_BRACKEN = new THREE.Color(0x9a6a34);
+const COLOR_HEATHER = new THREE.Color(0x6e4b5c);
+const COLOR_ROCK = new THREE.Color(0x7d7d80);
+const COLOR_SNOW = new THREE.Color(0xeef0f4);
 
 // Heightfield cache populated as terrain chunks are generated. This lets runtime
 // systems (player/AI/camera) query terrain heights without recomputing noise.
 const chunkHeights = new Map<string, Float32Array>();
 
+/**
+ * Highland terrain: broad U-shaped glens (whose low floors fill with lochs)
+ * between rounded hills, with rocky ridges on the highest ground.
+ */
 export function getTerrainHeight(x: number, z: number): number {
-  const r = getSurrealFactor(x, z);
-  const base = octaveNoise(x, z, 4, 0.5, 2.0, 0.006);
-  const detail = octaveNoise(x + 1000, z + 1000, 2, 0.4, 2.5, 0.02);
+  // 0 = glen floor, 1 = upland. Raised to a power so floors are wide and sides steep.
+  const glen = smoothstep(-0.35, 0.45, octaveNoise(x, z, 3, 0.5, 2, 0.0016));
+  const glenShape = Math.pow(glen, 1.5);
 
-  let h = (base * 0.8 + detail * 0.2) * MAX_HEIGHT;
+  // Glen floors hover around the water line; where they dip below it, there's a loch.
+  const floor = 1.5 + octaveNoise(x + 3000, z - 1700, 2, 0.5, 2, 0.0025) * 7;
 
-  // Flatten near center for nice spawn area
-  const distFromCenter = Math.sqrt(x * x + z * z);
-  const flatZone = smoothstep(20, 60, distFromCenter);
-  h *= flatZone;
+  const hills = octaveNoise(x - 900, z + 400, 4, 0.5, 2, 0.006);
+  const ridge = Math.pow(ridgedNoise(x + 5000, z + 5000, 0.004), 2);
+  const upland = 18 + hills * 20 + ridge * 50 * smoothstep(0.5, 1, glen);
 
-  // More dramatic terrain at edges
-  const edgeFactor = 1 + r * 1.5;
-  h *= edgeFactor;
+  let h = lerp(floor, upland, glenShape);
+  h += octaveNoise(x + 1000, z + 1000, 2, 0.4, 2.5, 0.03) * 1.5;
 
-  return h;
+  // Gentle, dry glen floor at spawn
+  const d = Math.sqrt(x * x + z * z);
+  return lerp(3, h, smoothstep(40, 140, d));
 }
 
-export function getSurrealFactor(x: number, z: number): number {
-  const dx = x / HALF_WORLD;
-  const dz = z / HALF_WORLD;
-  const dist = Math.sqrt(dx * dx + dz * dz);
-  return smoothstep(0.4, 0.9, dist);
+/** Steepness at (x, z): 0 = flat, 1 = vertical. */
+export function getTerrainSlope(x: number, z: number): number {
+  const dx = getTerrainHeight(x + 1, z) - getTerrainHeight(x - 1, z);
+  const dz = getTerrainHeight(x, z + 1) - getTerrainHeight(x, z - 1);
+  const ny = 2 / Math.sqrt(dx * dx + dz * dz + 4);
+  return 1 - ny;
+}
+
+/** Drop the cached heightfield of a chunk that has been unloaded. */
+export function forgetChunkHeights(chunkX: number, chunkZ: number) {
+  chunkHeights.delete(`${chunkX},${chunkZ}`);
 }
 
 /**
@@ -91,42 +98,41 @@ export function getTerrainHeightCached(x: number, z: number): number {
   return hx0 + (hx1 - hx0) * tz;
 }
 
-function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
-  const surreal = getSurrealFactor(x, z);
-  const slope = 1 - normal.y;
+const tmpColor = new THREE.Color();
 
-  // Realistic color based on height and slope
-  let realistic = new THREE.Color();
-  if (height < WATER_LEVEL + 1) {
-    realistic.copy(COLOR_SAND);
-  } else if (slope > 0.5) {
-    realistic.copy(COLOR_ROCK);
-  } else if (height > MAX_HEIGHT * 0.7) {
-    realistic.lerpColors(COLOR_ROCK, COLOR_SNOW, smoothstep(MAX_HEIGHT * 0.7, MAX_HEIGHT * 0.9, height));
-  } else if (height > MAX_HEIGHT * 0.3) {
-    realistic.lerpColors(COLOR_GRASS, COLOR_DIRT, smoothstep(MAX_HEIGHT * 0.3, MAX_HEIGHT * 0.6, height));
+/** Shared by every chunk; never disposed. */
+export const terrainMaterial = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.9,
+  metalness: 0.02,
+});
+
+function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
+  const slope = 1 - normal.y;
+  const c = tmpColor;
+  const patch = octaveNoise(x * 2, z * 2, 2, 0.5, 2, 0.02); // -1..1 patchiness
+
+  if (height < WATER_LEVEL - 0.5) {
+    c.copy(COLOR_PEAT);
+  } else if (height < 1.2) {
+    c.lerpColors(COLOR_SHINGLE, COLOR_MOOR, smoothstep(0.2, 1.2, height));
   } else {
-    realistic.copy(COLOR_GRASS);
+    // Low ground: moor grass with rusty bracken patches; higher: heather takes over.
+    c.lerpColors(COLOR_MOOR, COLOR_BRACKEN, smoothstep(0.35, 0.7, patch) * (1 - smoothstep(25, 40, height)));
+    const heather = smoothstep(8, 30, height) * smoothstep(-0.4, 0.3, patch) * (1 - smoothstep(55, 75, height));
+    c.lerp(COLOR_HEATHER, heather * 0.85);
+
+    // Steep slopes and high ridges are bare rock / scree
+    const rock = Math.max(smoothstep(0.3, 0.5, slope), smoothstep(50, 70, height) * 0.8);
+    c.lerp(COLOR_ROCK, rock);
+
+    // Patchy snow on the tops
+    const snow = smoothstep(SNOW_LINE, SNOW_LINE + 10, height + patch * 6) * (1 - smoothstep(0.45, 0.6, slope));
+    c.lerp(COLOR_SNOW, snow);
   }
 
-  // Add noise variation
-  const variation = octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.1;
-  realistic.offsetHSL(0, 0, variation);
-
-  // Surreal color
-  const surIdx = Math.abs(octaveNoise(x, z, 1, 1, 1, 0.01));
-  const surreal1 = new THREE.Color().lerpColors(COLOR_SURREAL_1, COLOR_SURREAL_2, surIdx);
-  const surreal2 = new THREE.Color().lerpColors(COLOR_SURREAL_3, COLOR_SURREAL_4, surIdx);
-  const surrealColor = new THREE.Color().lerpColors(
-    surreal1,
-    surreal2,
-    Math.abs(octaveNoise(x + 500, z + 500, 1, 1, 1, 0.008)),
-  );
-
-  // Blend
-  const result = new THREE.Color();
-  result.lerpColors(realistic, surrealColor, surreal);
-  return result;
+  c.offsetHSL(0, 0, octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.04);
+  return c;
 }
 
 export function createTerrainChunk(
@@ -172,14 +178,7 @@ export function createTerrainChunk(
 
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.85,
-    metalness: 0.05,
-    flatShading: false,
-  });
-
-  const mesh = new THREE.Mesh(geometry, material);
+  const mesh = new THREE.Mesh(geometry, terrainMaterial);
   mesh.position.set(offsetX, 0, offsetZ);
   mesh.receiveShadow = true;
   mesh.castShadow = false;

@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { Wings } from './wings';
 import { buildCharacter, DEFAULT_CHOICE, type CharacterChoice } from './character';
 import { getTerrainHeightCached } from '../world/terrain';
-import { isOutsideBorder, getBorderRadius } from '../world/cactus-border';
 import { damp, dampAngle } from '../utils/math-helpers';
 import { disposeObject } from '../utils/dispose';
 
@@ -185,28 +184,6 @@ export class OtterController {
 
     // Rotation
     this.model.rotation.y = this.heading;
-
-    // Check border - bounce back instead of dying
-    if (isOutsideBorder(this.model.position.x, this.model.position.z)) {
-      const px = this.model.position.x;
-      const pz = this.model.position.z;
-      const dist = Math.sqrt(px * px + pz * pz);
-      const nx = px / dist;
-      const nz = pz / dist;
-
-      // Push back inside
-      const safeR = getBorderRadius() * 0.95;
-      this.model.position.x = nx * safeR;
-      this.model.position.z = nz * safeR;
-
-      // Reflect velocity inward
-      const bounceStrength = 15;
-      this.velocity.x = -nx * bounceStrength;
-      this.velocity.z = -nz * bounceStrength;
-
-      // Face toward center
-      this.heading = Math.atan2(-nx, -nz);
-    }
 
     // Animations
     this.animate(this.time, dt);

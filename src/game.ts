@@ -2,8 +2,6 @@ import * as THREE from 'three';
 import { ChunkManager } from './world/chunk-manager';
 import { Water } from './world/water';
 import { Vegetation } from './world/vegetation';
-import { SurrealZone } from './world/surreal-zone';
-import { CactusBorder } from './world/cactus-border';
 import { Skybox } from './world/skybox';
 import { OtterController } from './character/otter-controller';
 import { CameraSystem } from './camera/camera-system';
@@ -31,8 +29,6 @@ export class Game {
   private chunkManager: ChunkManager;
   private water: Water;
   private vegetation!: Vegetation;
-  private surrealZone!: SurrealZone;
-  private cactusBorder!: CactusBorder;
   private skybox: Skybox;
   private otter: OtterController;
 
@@ -57,8 +53,8 @@ export class Game {
   private lastHudBlockIndex = -1;
 
   // Fog reference for falling effect
-  private baseFogNear = 120;
-  private baseFogFar = 600;
+  private baseFogNear = 140;
+  private baseFogFar = 520;
 
   constructor() {
     // Renderer
@@ -74,7 +70,7 @@ export class Game {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xaaddff, this.baseFogNear, this.baseFogFar);
+    this.scene.fog = new THREE.Fog(0xb9c7d2, this.baseFogNear, this.baseFogFar);
 
     // Camera
     this.cameraSystem = new CameraSystem();
@@ -179,6 +175,9 @@ export class Game {
     }
 
     if (this.state === 'title') {
+      // Keep streaming the rest of the view while the player is in the menus.
+      this.chunkManager.update(this.otter.position.x, this.otter.position.z);
+      this.skybox.update(this.cameraSystem.camera.position);
       this.renderer.render(this.scene, this.cameraSystem.camera);
       return;
     }
@@ -265,8 +264,8 @@ export class Game {
 
     // Update world
     this.chunkManager.update(this.otter.position.x, this.otter.position.z);
-    this.water.update(time);
-    this.surrealZone.update(dt);
+    this.water.update(time, this.otter.position.x, this.otter.position.z);
+    this.skybox.update(this.cameraSystem.camera.position);
     this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z);
     this.animals.update(dt, time, this.otter.position);
     this.people.update(dt, time, this.otter.position, this.otter.heading);
@@ -284,32 +283,24 @@ export class Game {
 
   private loadStep() {
     switch (this.loadPhase) {
-      case 0: {
-        // Generate terrain in batches
-        const done = this.chunkManager.generateBatch(4);
-        const p = this.chunkManager.progress;
-        this.loadingScreen.setProgress(p * 0.5, `Generating terrain... ${Math.round(p * 100)}%`);
-        if (done) this.loadPhase = 1;
-        break;
-      }
-      case 1:
-        this.loadingScreen.setProgress(0.55, 'Growing trees and bushes...');
+      case 0:
+        // Vegetation subscribes to chunk loads, so it must exist before any terrain.
+        this.loadingScreen.setProgress(0.02, 'Planting heather and pines...');
         this.vegetation = new Vegetation();
         this.scene.add(this.vegetation.group);
-        this.loadPhase = 2;
+        this.chunkManager.setCallbacks(
+          (cx, cz) => this.vegetation.addChunk(cx, cz),
+          (cx, cz) => this.vegetation.removeChunk(cx, cz),
+        );
+        this.loadPhase = 1;
         break;
-      case 2:
-        this.loadingScreen.setProgress(0.7, 'Creating surreal zone...');
-        this.surrealZone = new SurrealZone();
-        this.scene.add(this.surrealZone.group);
-        this.loadPhase = 3;
+      case 1: {
+        // Build the glen around spawn; the rest streams in during play.
+        const p = this.chunkManager.preload(0, 0, 5, 6);
+        this.loadingScreen.setProgress(0.05 + p * 0.8, `Shaping the Highlands... ${Math.round(p * 100)}%`);
+        if (p >= 1) this.loadPhase = 4;
         break;
-      case 3:
-        this.loadingScreen.setProgress(0.85, 'Planting cacti border...');
-        this.cactusBorder = new CactusBorder();
-        this.scene.add(this.cactusBorder.mesh);
-        this.loadPhase = 4;
-        break;
+      }
       case 4:
         this.loadingScreen.setProgress(0.88, 'Brewing weather...');
         this.weather = new Weather();
@@ -349,6 +340,6 @@ export class Game {
     const fog = this.scene.fog as THREE.Fog;
     fog.near = this.baseFogNear;
     fog.far = this.baseFogFar;
-    fog.color.set(0xaaddff);
+    fog.color.set(0xb9c7d2);
   }
 }

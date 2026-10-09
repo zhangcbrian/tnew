@@ -1,19 +1,22 @@
 import * as THREE from 'three';
-import { HALF_WORLD } from './terrain';
+import { CHUNK_SIZE } from './terrain';
+
+const SIZE = 1400;
 
 export class Water {
   mesh: THREE.Mesh;
 
   constructor() {
-    const geometry = new THREE.PlaneGeometry(HALF_WORLD * 2.8, HALF_WORLD * 2.8);
+    const geometry = new THREE.PlaneGeometry(SIZE, SIZE);
     geometry.rotateX(-Math.PI / 2);
 
+    // Dark, peaty loch water
     const material = new THREE.MeshStandardMaterial({
-      color: 0x3a7ca5,
+      color: 0x2f4a5a,
       transparent: true,
-      opacity: 0.7,
-      roughness: 0.1,
-      metalness: 0.3,
+      opacity: 0.82,
+      roughness: 0.12,
+      metalness: 0.35,
       side: THREE.DoubleSide,
     });
 
@@ -22,8 +25,10 @@ export class Water {
     this.mesh.receiveShadow = true;
   }
 
-  update(time: number) {
-    // Gentle bob
+  /** Bob gently and stay under the player (snapped to the chunk grid so it doesn't visibly slide). */
+  update(time: number, playerX: number, playerZ: number) {
+    this.mesh.position.x = Math.round(playerX / CHUNK_SIZE) * CHUNK_SIZE;
+    this.mesh.position.z = Math.round(playerZ / CHUNK_SIZE) * CHUNK_SIZE;
     this.mesh.position.y = -0.5 + Math.sin(time * 0.5) * 0.15;
   }
 }
