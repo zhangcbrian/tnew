@@ -146,7 +146,6 @@ export function createTerrainChunk(
   const positions = geometry.attributes.position;
   const heights = new Float32Array(positions.count);
   const colors = new Float32Array(positions.count * 3);
-  const normals = geometry.attributes.normal;
 
   const offsetX = chunkX * CHUNK_SIZE;
   const offsetZ = chunkZ * CHUNK_SIZE;
@@ -160,7 +159,18 @@ export function createTerrainChunk(
     heights[i] = h;
   }
 
-  geometry.computeVertexNormals();
+  // Normals from the height function itself (not per-chunk geometry), so neighboring
+  // chunks light identically along their shared edges — no visible seams.
+  const normals = geometry.attributes.normal;
+  for (let i = 0; i < positions.count; i++) {
+    const wx = positions.getX(i) + offsetX;
+    const wz = positions.getZ(i) + offsetZ;
+    const dx = getTerrainHeight(wx + 1, wz) - getTerrainHeight(wx - 1, wz);
+    const dz = getTerrainHeight(wx, wz + 1) - getTerrainHeight(wx, wz - 1);
+    const len = Math.sqrt(dx * dx + dz * dz + 4);
+    normals.setXYZ(i, -dx / len, 2 / len, -dz / len);
+  }
+  normals.needsUpdate = true;
   chunkHeights.set(`${chunkX},${chunkZ}`, heights);
 
   // Vertex colors
