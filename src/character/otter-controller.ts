@@ -1,9 +1,11 @@
 import * as THREE from 'three';
-import { createOtter } from './otter';
 import { Wings } from './wings';
+import { Animator } from './animator';
+import { buildCharacter, DEFAULT_CHOICE, type CharacterChoice } from './character';
 import { getTerrainHeightCached } from '../world/terrain';
-import { isOutsideBorder, getBorderRadius } from '../world/cactus-border';
 import { damp, dampAngle } from '../utils/math-helpers';
+import { disposeObject } from '../utils/dispose';
+import { type BlockQuery, NO_BLOCKS } from '../world/block-query';
 
 export type OtterState = 'IDLE' | 'WALK' | 'FLY' | 'FALL' | 'GAME_OVER';
 
@@ -15,6 +17,11 @@ const FLY_DESCEND_SPEED = 12;
 const FALL_ACCEL = 15;
 const MAX_FALL_SPEED = 60;
 const TURN_SPEED = 8;
+// Collision box against placed blocks
+const HALF_WIDTH = 0.4;
+const BODY_HEIGHT = 1.2;
+/** Walking automatically climbs onto anything this high or lower. */
+const STEP_UP = 0.5;
 
 export class OtterController {
   model: THREE.Group;
@@ -27,12 +34,10 @@ export class OtterController {
   private fallTime = 0;
   private time = 0;
 
-  private body: THREE.Mesh | null = null;
-  private tail: THREE.Mesh | null = null;
-  private legFL: THREE.Mesh | null = null;
-  private legFR: THREE.Mesh | null = null;
-  private legBL: THREE.Mesh | null = null;
-  private legBR: THREE.Mesh | null = null;
+  private animator!: Animator;
+  /** For working out climb and turn rates between frames */
+  private lastY = 0;
+  private lastHeading = 0;
 
   // Expose for camera
   get position(): THREE.Vector3 {
@@ -40,18 +45,28 @@ export class OtterController {
   }
 
   constructor() {
-    this.model = createOtter();
-    this.wings = new Wings(this.model);
-
-    // Cache frequently-used sub-meshes to avoid per-frame scene graph searches.
-    this.body = this.model.getObjectByName('body') as THREE.Mesh | null;
-    this.tail = this.model.getObjectByName('tail') as THREE.Mesh | null;
-    this.legFL = this.model.getObjectByName('legFL') as THREE.Mesh | null;
-    this.legFR = this.model.getObjectByName('legFR') as THREE.Mesh | null;
-    this.legBL = this.model.getObjectByName('legBL') as THREE.Mesh | null;
-    this.legBR = this.model.getObjectByName('legBR') as THREE.Mesh | null;
+    this.model = new THREE.Group();
+    this.model.name = 'player';
+    this.wings = this.attach(DEFAULT_CHOICE);
 
     this.model.position.set(0, getTerrainHeightCached(0, 0) + 0.1, 0);
+  }
+
+  /** Replace the player's animal, wings and colors, keeping position and state. */
+  setCharacter(choice: CharacterChoice) {
+    disposeObject(this.model);
+    this.wings.dispose();
+    this.model.clear();
+    this.wings = this.attach(choice);
+  }
+
+  private attach(choice: CharacterChoice): Wings {
+    const built = buildCharacter(choice.animal, choice.wings, choice.colors);
+    this.model.add(built.group);
+
+    this.animator = new Animator(built.rig, built.wings);
+
+    return built.wings!;
   }
 
   respawn() {
@@ -72,6 +87,7 @@ export class OtterController {
     wantFly: boolean,             // space held
     wantDescend: boolean,         // shift held
     cameraYaw: number,            // camera's horizontal angle
+    blocks: BlockQuery = NO_BLOCKS,
   ) {
     this.time += dt;
 
@@ -126,12 +142,25 @@ export class OtterController {
       this.velocity.z = damp(this.velocity.z, 0, 10, dt);
     }
 
-    // Position
-    this.model.position.x += this.velocity.x * dt;
-    this.model.position.z += this.velocity.z * dt;
+    // Position: move one axis at a time so walking into a block slides along it.
+    // If we're somehow already overlapping a block, let any move through so we can get out.
+    const pos = this.model.position;
+    const stuck = this.bodyHits(blocks, pos.x, pos.y, pos.z);
+    const nx = pos.x + this.velocity.x * dt;
+    if (stuck || this.canMoveTo(blocks, nx, pos.z, pos.y, isFlying)) {
+      pos.x = nx;
+    } else {
+      this.velocity.x = 0;
+    }
+    const nz = pos.z + this.velocity.z * dt;
+    if (stuck || this.canMoveTo(blocks, pos.x, nz, pos.y, isFlying)) {
+      pos.z = nz;
+    } else {
+      this.velocity.z = 0;
+    }
 
-    // Height
-    const terrainH = getTerrainHeightCached(this.model.position.x, this.model.position.z);
+    // Height: the ground is the terrain or the top of a block we're standing on
+    const terrainH = this.groundAt(blocks, pos.x, pos.z, pos.y);
 
     if (this.state === 'FLY') {
       if (wantFly) {
@@ -146,7 +175,13 @@ export class OtterController {
         this.flyHeight = 0;
         this.state = isMoving ? 'WALK' : 'IDLE';
       } else {
-        this.model.position.y = damp(this.model.position.y, this.flyHeight, 6, dt);
+        const newY = damp(pos.y, this.flyHeight, 6, dt);
+        // Flying up into the underside of a block stops the climb
+        if (newY > pos.y && blocks.boxHits(pos.x - HALF_WIDTH, newY, pos.z - HALF_WIDTH, pos.x + HALF_WIDTH, newY + BODY_HEIGHT, pos.z + HALF_WIDTH)) {
+          this.flyHeight = pos.y;
+        } else {
+          pos.y = newY;
+        }
       }
     } else {
       // Stick to terrain smoothly - no gravity bounce
@@ -162,30 +197,46 @@ export class OtterController {
     // Rotation
     this.model.rotation.y = this.heading;
 
-    // Check border - bounce back instead of dying
-    if (isOutsideBorder(this.model.position.x, this.model.position.z)) {
-      const px = this.model.position.x;
-      const pz = this.model.position.z;
-      const dist = Math.sqrt(px * px + pz * pz);
-      const nx = px / dist;
-      const nz = pz / dist;
-
-      // Push back inside
-      const safeR = getBorderRadius() * 0.95;
-      this.model.position.x = nx * safeR;
-      this.model.position.z = nz * safeR;
-
-      // Reflect velocity inward
-      const bounceStrength = 15;
-      this.velocity.x = -nx * bounceStrength;
-      this.velocity.z = -nz * bounceStrength;
-
-      // Face toward center
-      this.heading = Math.atan2(-nx, -nz);
-    }
-
     // Animations
     this.animate(this.time, dt);
+  }
+
+  /** Terrain height, or the top of a block low enough to step onto from height y. */
+  private groundAt(blocks: BlockQuery, x: number, z: number, y: number): number {
+    return Math.max(getTerrainHeightCached(x, z), this.blockSupport(blocks, x, z, y + STEP_UP));
+  }
+
+  /** Does the body, standing at height y, overlap a block? */
+  private bodyHits(blocks: BlockQuery, x: number, y: number, z: number): boolean {
+    return blocks.boxHits(x - HALF_WIDTH, y + 0.05, z - HALF_WIDTH, x + HALF_WIDTH, y + BODY_HEIGHT, z + HALF_WIDTH);
+  }
+
+  /**
+   * Can the body move to (x, z)? Walking checks at the height it would end up at there
+   * (after climbing a slope or a small step), so we never get pushed up into a roof.
+   */
+  private canMoveTo(blocks: BlockQuery, x: number, z: number, y: number, flying: boolean): boolean {
+    const bodyY = flying ? y : Math.max(y, this.groundAt(blocks, x, z, y));
+    return !this.bodyHits(blocks, x, bodyY, z);
+  }
+
+  /** Highest block top under any corner of the player's footprint (at or below maxY). */
+  private blockSupport(blocks: BlockQuery, x: number, z: number, maxY: number): number {
+    let best = -Infinity;
+    for (const dx of [-HALF_WIDTH, HALF_WIDTH]) {
+      for (const dz of [-HALF_WIDTH, HALF_WIDTH]) {
+        best = Math.max(best, blocks.supportHeight(x + dx, z + dz, maxY));
+      }
+    }
+    return best;
+  }
+
+  /** Does the player's body overlap this box? Used to refuse placing a block on them. */
+  overlaps(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): boolean {
+    const p = this.model.position;
+    return p.x + HALF_WIDTH > minX && p.x - HALF_WIDTH < maxX
+      && p.y + BODY_HEIGHT > minY && p.y < maxY
+      && p.z + HALF_WIDTH > minZ && p.z - HALF_WIDTH < maxZ;
   }
 
   private updateFalling(dt: number) {
@@ -205,50 +256,19 @@ export class OtterController {
     }
   }
 
-  private animate(time: number, _dt: number) {
-    const body = this.body;
-    const tail = this.tail;
-    const legFL = this.legFL;
-    const legFR = this.legFR;
-    const legBL = this.legBL;
-    const legBR = this.legBR;
-
-    switch (this.state) {
-      case 'IDLE':
-        this.animateIdle(time);
-        break;
-      case 'WALK':
-        // Body bob
-        if (body) body.position.y = 0.5 + Math.sin(time * 10) * 0.03;
-        // Leg cycle
-        if (legFL) legFL.rotation.x = Math.sin(time * 10) * 0.4 + 0.2;
-        if (legFR) legFR.rotation.x = Math.sin(time * 10 + Math.PI) * 0.4 + 0.2;
-        if (legBL) legBL.rotation.x = Math.sin(time * 10 + Math.PI) * 0.4 - 0.2;
-        if (legBR) legBR.rotation.x = Math.sin(time * 10) * 0.4 - 0.2;
-        if (tail) tail.rotation.z = Math.sin(time * 6) * 0.2;
-        this.wings.update(time, 0.2, false);
-        break;
-      case 'FLY':
-        // Tilt forward
-        if (body) body.position.y = 0.5;
-        // Legs tucked
-        if (legFL) legFL.rotation.x = 0.5;
-        if (legFR) legFR.rotation.x = 0.5;
-        if (legBL) legBL.rotation.x = -0.5;
-        if (legBR) legBR.rotation.x = -0.5;
-        if (tail) tail.rotation.z = Math.sin(time * 4) * 0.15;
-        this.wings.update(time, 1.0, true);
-        break;
-      default:
-        this.animateIdle(time);
-    }
+  private animate(_time: number, dt: number) {
+    // Climb and turn rates drive flight posture (pitch, banking)
+    const climb = dt > 0 ? (this.model.position.y - this.lastY) / dt : 0;
+    let dh = this.heading - this.lastHeading;
+    dh = Math.atan2(Math.sin(dh), Math.cos(dh)); // wrap so crossing ±π isn't a full spin
+    const turn = dt > 0 ? dh / dt : 0;
+    this.lastY = this.model.position.y;
+    this.lastHeading = this.heading;
+    const speed = Math.hypot(this.velocity.x, this.velocity.z) / WALK_SPEED;
+    this.animator.update(dt, this.time, { speed, flying: this.state === 'FLY', climb, turn });
   }
 
-  private animateIdle(time: number) {
-    const body = this.body;
-    const tail = this.tail;
-    if (body) body.position.y = 0.5 + Math.sin(time * 2) * 0.02;
-    if (tail) tail.rotation.z = Math.sin(time * 3) * 0.15;
-    this.wings.update(time, 0.1, false);
+  private animateIdle(_time: number) {
+    this.animator.update(1 / 60, this.time, { speed: 0, flying: false, climb: 0, turn: 0 });
   }
 }

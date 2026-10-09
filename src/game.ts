@@ -2,8 +2,6 @@ import * as THREE from 'three';
 import { ChunkManager } from './world/chunk-manager';
 import { Water } from './world/water';
 import { Vegetation } from './world/vegetation';
-import { SurrealZone } from './world/surreal-zone';
-import { CactusBorder } from './world/cactus-border';
 import { Skybox } from './world/skybox';
 import { OtterController } from './character/otter-controller';
 import { CameraSystem } from './camera/camera-system';
@@ -12,13 +10,22 @@ import { LoadingScreen } from './ui/loading';
 import { GameOverScreen } from './ui/game-over';
 import { HUD } from './ui/hud';
 import { PauseScreen } from './ui/pause-screen';
+import { CharacterSelect } from './ui/character-select';
+import { ColorScreen } from './ui/color-screen';
 import { RocketSystem } from './character/rockets';
 import { Weather } from './world/weather';
 import { Animals } from './world/animals';
 import { BuildingSystem } from './world/building';
 import { People } from './world/people';
+import { blendClimate, createClimate, dominantBiome } from './world/biomes';
 import { SciaticaSound } from './audio/sciatica-sound';
 import { ShockwaveEffect } from './effects/shockwave';
+
+const MAX_PIXEL_RATIO = 1.5;
+const MIN_RENDER_SCALE = 0.6;
+/** Smoothed frame times (seconds) that count as slow / steady. */
+const SLOW_FRAME = 0.019;
+const STEADY_FRAME = 0.0175;
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -29,8 +36,6 @@ export class Game {
   private chunkManager: ChunkManager;
   private water: Water;
   private vegetation!: Vegetation;
-  private surrealZone!: SurrealZone;
-  private cactusBorder!: CactusBorder;
   private skybox: Skybox;
   private otter: OtterController;
 
@@ -53,16 +58,28 @@ export class Game {
   private resizeQueued = false;
   private readonly mouseDelta = new THREE.Vector2();
   private lastHudBlockIndex = -1;
+  private climate = createClimate();
+  private climateReady = false;
+  private renderScale = 1;
+  private avgFrame = 1 / 60;
+  private slowTime = 0;
+  private steadyTime = 0;
+  private sinceChange = 0;
+  private dropBlockedFor = 0;
+  private raiseBlockedFor = 0;
+  private lastChangeWasRaise = false;
+  private lastDrop: { scaleBefore: number; frameBefore: number } | null = null;
+  private targetClimate = createClimate();
 
   // Fog reference for falling effect
-  private baseFogNear = 120;
-  private baseFogFar = 600;
+  private baseFogNear = 140;
+  private baseFogFar = 520;
 
   constructor() {
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -72,7 +89,7 @@ export class Game {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xaaddff, this.baseFogNear, this.baseFogFar);
+    this.scene.fog = new THREE.Fog(0xb9c7d2, this.baseFogNear, this.baseFogFar);
 
     // Camera
     this.cameraSystem = new CameraSystem();
@@ -110,11 +127,17 @@ export class Game {
     this.pauseScreen = new PauseScreen();
     this.hud = new HUD();
 
-    // Wire up title screen play button
-    this.loadingScreen.onPlay(() => {
-      this.state = 'playing';
-      this.hud.show();
+    // Title screen Play -> pick animal & wings -> color -> play
+    const characterSelect = new CharacterSelect();
+    const colorScreen = new ColorScreen();
+    const openPicker = () => characterSelect.open((sel) => {
+      colorScreen.open(sel.animal, sel.wings, openPicker, (choice) => {
+        this.otter.setCharacter(choice);
+        this.state = 'playing';
+        this.hud.show();
+      });
     });
+    this.loadingScreen.onPlay(openPicker);
 
     // Resize
     window.addEventListener('resize', this.onResize, { passive: true });
@@ -130,7 +153,7 @@ export class Game {
     requestAnimationFrame(() => {
       this.resizeQueued = false;
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setPixelRatio(this.pixelRatio());
     });
   };
 
@@ -171,6 +194,10 @@ export class Game {
     }
 
     if (this.state === 'title') {
+      // Keep streaming the rest of the view while the player is in the menus.
+      this.chunkManager.update(this.otter.position.x, this.otter.position.z);
+      this.skybox.update(this.cameraSystem.camera.position);
+      this.vegetation?.update(this.cameraSystem.camera.position);
       this.renderer.render(this.scene, this.cameraSystem.camera);
       return;
     }
@@ -219,6 +246,7 @@ export class Game {
       this.input.wantFly,
       this.input.wantDescend,
       this.cameraSystem.cameraYaw,
+      this.building,
     );
 
     // Shoot rocket
@@ -245,8 +273,16 @@ export class Game {
     const selectNum = this.input.consumeSelectBlock();
     if (selectNum >= 0) this.building.selectBlock(selectNum);
     if (this.input.consumePlaceBlock()) {
-      this.building.updatePreview(this.cameraSystem.camera, this.otter.position);
-      this.building.placeBlock();
+      const pos = this.otter.position;
+      this.building.updatePreview(this.cameraSystem.camera, pos, this.chunkManager.nearbyMeshes(pos.x, pos.z));
+      // Blocks are solid, so never place one on top of the player or a creature.
+      this.building.placeBlock((minX, minY, minZ, maxX, maxY, maxZ) => {
+        const cx = (minX + maxX) / 2;
+        const cz = (minZ + maxZ) / 2;
+        return this.otter.overlaps(minX, minY, minZ, maxX, maxY, maxZ)
+          || this.animals.isNear(cx, minY, cz, 1.2)
+          || this.people.isNear(cx, minY, cz, 1.2);
+      });
     }
     this.building.hidePreview();
     if (this.input.consumeRemoveBlock()) this.building.removeBlock(this.cameraSystem.camera);
@@ -257,16 +293,19 @@ export class Game {
 
     // Update world
     this.chunkManager.update(this.otter.position.x, this.otter.position.z);
-    this.water.update(time);
-    this.surrealZone.update(dt);
-    this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z);
-    this.animals.update(dt, time, this.otter.position);
+    this.water.update(time, this.otter.position.x, this.otter.position.z);
+    this.skybox.update(this.cameraSystem.camera.position);
+    this.vegetation.update(this.cameraSystem.camera.position);
+    this.applyClimate(dt);
+    this.adaptResolution(dt);
+    this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z, this.climate.rain, this.climate.snow);
+    this.animals.update(dt, time, this.otter.position, this.building);
     this.people.update(dt, time, this.otter.position, this.otter.heading);
 
     // Shadow follows player
     this.sunLight.position.set(
       this.otter.position.x + 80,
-      100,
+      this.otter.position.y + 100,
       this.otter.position.z + 60,
     );
     this.sunLight.target.position.copy(this.otter.position);
@@ -276,32 +315,24 @@ export class Game {
 
   private loadStep() {
     switch (this.loadPhase) {
-      case 0: {
-        // Generate terrain in batches
-        const done = this.chunkManager.generateBatch(4);
-        const p = this.chunkManager.progress;
-        this.loadingScreen.setProgress(p * 0.5, `Generating terrain... ${Math.round(p * 100)}%`);
-        if (done) this.loadPhase = 1;
-        break;
-      }
-      case 1:
-        this.loadingScreen.setProgress(0.55, 'Growing trees and bushes...');
+      case 0:
+        // Vegetation subscribes to chunk loads, so it must exist before any terrain.
+        this.loadingScreen.setProgress(0.02, 'Planting heather and pines...');
         this.vegetation = new Vegetation();
         this.scene.add(this.vegetation.group);
-        this.loadPhase = 2;
+        this.chunkManager.setCallbacks(
+          (cx, cz, plants) => this.vegetation.addChunk(cx, cz, plants),
+          (cx, cz) => this.vegetation.removeChunk(cx, cz),
+        );
+        this.loadPhase = 1;
         break;
-      case 2:
-        this.loadingScreen.setProgress(0.7, 'Creating surreal zone...');
-        this.surrealZone = new SurrealZone();
-        this.scene.add(this.surrealZone.group);
-        this.loadPhase = 3;
+      case 1: {
+        // Build the glen around spawn; the rest streams in during play.
+        const p = this.chunkManager.preload(0, 0, 5);
+        this.loadingScreen.setProgress(0.05 + p * 0.8, `Shaping the Highlands... ${Math.round(p * 100)}%`);
+        if (p >= 1) this.loadPhase = 4;
         break;
-      case 3:
-        this.loadingScreen.setProgress(0.85, 'Planting cacti border...');
-        this.cactusBorder = new CactusBorder();
-        this.scene.add(this.cactusBorder.mesh);
-        this.loadPhase = 4;
-        break;
+      }
       case 4:
         this.loadingScreen.setProgress(0.88, 'Brewing weather...');
         this.weather = new Weather();
@@ -324,6 +355,7 @@ export class Game {
         this.loadingScreen.setProgress(0.97, 'Setting up building...');
         this.building = new BuildingSystem();
         this.scene.add(this.building.group);
+        this.people.blocks = this.building;
         this.loadPhase = 8;
         break;
       case 8:
@@ -337,10 +369,84 @@ export class Game {
     }
   }
 
+  /** Screen resolution: never above 1.5x (sharp enough on Retina, far cheaper than 2x), times the adaptive scale. */
+  private pixelRatio(): number {
+    return Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO) * this.renderScale;
+  }
+
+  /**
+   * Dynamic resolution: after 2 s of continuously slow frames, render fewer pixels; after 8 s of
+   * continuously smooth frames, try more again. If a drop doesn't actually speed frames up (the
+   * display or browser is capped at a low frame rate), undo it and stop trying for a while.
+   */
+  private adaptResolution(dt: number) {
+    this.avgFrame += (dt - this.avgFrame) * 0.05;
+    this.slowTime = this.avgFrame > SLOW_FRAME ? this.slowTime + dt : 0;
+    this.steadyTime = this.avgFrame < STEADY_FRAME ? this.steadyTime + dt : 0;
+    this.sinceChange += dt;
+
+    // Judge the last drop once it's had time to take effect
+    if (this.lastDrop && this.sinceChange > 3) {
+      if (this.avgFrame > this.lastDrop.frameBefore * 0.92) {
+        this.setRenderScale(this.lastDrop.scaleBefore); // no gain: frame rate is capped, not GPU-bound
+        this.dropBlockedFor = 300;
+      }
+      this.lastDrop = null;
+    }
+    this.dropBlockedFor = Math.max(0, this.dropBlockedFor - dt);
+    this.raiseBlockedFor = Math.max(0, this.raiseBlockedFor - dt);
+
+    if (this.slowTime > 2 && this.dropBlockedFor === 0 && !this.lastDrop && this.renderScale > MIN_RENDER_SCALE) {
+      // A step up that made frames slow again: stay at this level for a good while
+      if (this.lastChangeWasRaise && this.sinceChange < 8) this.raiseBlockedFor = 120;
+      this.lastDrop = { scaleBefore: this.renderScale, frameBefore: this.avgFrame };
+      this.setRenderScale(Math.max(MIN_RENDER_SCALE, this.renderScale - 0.1));
+      this.lastChangeWasRaise = false;
+    } else if (this.steadyTime > 8 && this.raiseBlockedFor === 0 && this.renderScale < 1) {
+      this.setRenderScale(Math.min(1, this.renderScale + 0.1));
+      this.lastChangeWasRaise = true;
+    }
+  }
+
+  private setRenderScale(scale: number) {
+    this.renderScale = Math.round(scale * 10) / 10;
+    this.slowTime = 0;
+    this.steadyTime = 0;
+    this.sinceChange = 0;
+    this.renderer.setPixelRatio(this.pixelRatio());
+  }
+
+  /** Sky, fog, water and weather follow the landscape the player is in (blended near borders). */
+  private applyClimate(dt: number) {
+    const p = this.otter.position;
+    const target = blendClimate(p.x, p.z, this.targetClimate);
+    const c = this.climate;
+    // Ease toward the target so crossing a border never flashes
+    const k = this.climateReady ? 1 - Math.exp(-dt * 1.5) : 1;
+    this.climateReady = true;
+    c.skyTop.lerp(target.skyTop, k);
+    c.skyBottom.lerp(target.skyBottom, k);
+    c.fog.lerp(target.fog, k);
+    c.water.lerp(target.water, k);
+    c.fogNear += (target.fogNear - c.fogNear) * k;
+    c.fogFar += (target.fogFar - c.fogFar) * k;
+    c.waterOpacity += (target.waterOpacity - c.waterOpacity) * k;
+    c.rain += (target.rain - c.rain) * k;
+    c.snow += (target.snow - c.snow) * k;
+
+    this.skybox.setColors(c.skyTop, c.skyBottom);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.copy(c.fog);
+    fog.near = c.fogNear;
+    fog.far = c.fogFar;
+    this.water.setColor(c.water, c.waterOpacity);
+    this.hud.setRegion(dominantBiome(p.x, p.z).name);
+  }
+
   private resetFog() {
     const fog = this.scene.fog as THREE.Fog;
     fog.near = this.baseFogNear;
     fog.far = this.baseFogFar;
-    fog.color.set(0xaaddff);
+    fog.color.set(0xb9c7d2);
   }
 }

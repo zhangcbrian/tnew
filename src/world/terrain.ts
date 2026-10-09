@@ -1,53 +1,37 @@
 import * as THREE from 'three';
-import { octaveNoise } from '../utils/noise';
-import { smoothstep, clamp } from '../utils/math-helpers';
+import { biomeWeights } from './biomes';
+import { smoothstep, lerp } from '../utils/math-helpers';
 
-export const WORLD_SIZE = 2048;
 export const CHUNK_SIZE = 64;
-export const HALF_WORLD = WORLD_SIZE / 2;
-const HEIGHT_SEGMENTS = 32;
-const MAX_HEIGHT = 30;
-const WATER_LEVEL = 0;
-
-const COLOR_GRASS = new THREE.Color(0x4a8c3f);
-const COLOR_DIRT = new THREE.Color(0x8b6914);
-const COLOR_ROCK = new THREE.Color(0x777788);
-const COLOR_SAND = new THREE.Color(0xc2b280);
-const COLOR_SNOW = new THREE.Color(0xe8e8f0);
-
-const COLOR_SURREAL_1 = new THREE.Color(0x9b59b6);
-const COLOR_SURREAL_2 = new THREE.Color(0x00bcd4);
-const COLOR_SURREAL_3 = new THREE.Color(0xff6f61);
-const COLOR_SURREAL_4 = new THREE.Color(0xf39c12);
+export const HEIGHT_SEGMENTS = 32;
+export const WATER_LEVEL = 0;
 
 // Heightfield cache populated as terrain chunks are generated. This lets runtime
 // systems (player/AI/camera) query terrain heights without recomputing noise.
 const chunkHeights = new Map<string, Float32Array>();
 
+/**
+ * Ground height: the landscape (biome) of this region, blended with its neighbors
+ * near region edges. The spawn point sits on a gentle, dry patch.
+ */
 export function getTerrainHeight(x: number, z: number): number {
-  const r = getSurrealFactor(x, z);
-  const base = octaveNoise(x, z, 4, 0.5, 2.0, 0.006);
-  const detail = octaveNoise(x + 1000, z + 1000, 2, 0.4, 2.5, 0.02);
-
-  let h = (base * 0.8 + detail * 0.2) * MAX_HEIGHT;
-
-  // Flatten near center for nice spawn area
-  const distFromCenter = Math.sqrt(x * x + z * z);
-  const flatZone = smoothstep(20, 60, distFromCenter);
-  h *= flatZone;
-
-  // More dramatic terrain at edges
-  const edgeFactor = 1 + r * 1.5;
-  h *= edgeFactor;
-
-  return h;
+  let h = 0;
+  for (const { biome, w } of biomeWeights(x, z)) h += biome.height(x, z) * w;
+  const d = Math.sqrt(x * x + z * z);
+  return d < 140 ? lerp(3, h, smoothstep(40, 140, d)) : h;
 }
 
-export function getSurrealFactor(x: number, z: number): number {
-  const dx = x / HALF_WORLD;
-  const dz = z / HALF_WORLD;
-  const dist = Math.sqrt(dx * dx + dz * dz);
-  return smoothstep(0.4, 0.9, dist);
+/** Steepness at (x, z): 0 = flat, 1 = vertical. */
+export function getTerrainSlope(x: number, z: number): number {
+  const dx = getTerrainHeight(x + 1, z) - getTerrainHeight(x - 1, z);
+  const dz = getTerrainHeight(x, z + 1) - getTerrainHeight(x, z - 1);
+  const ny = 2 / Math.sqrt(dx * dx + dz * dz + 4);
+  return 1 - ny;
+}
+
+/** Drop the cached heightfield of a chunk that has been unloaded. */
+export function forgetChunkHeights(chunkX: number, chunkZ: number) {
+  chunkHeights.delete(`${chunkX},${chunkZ}`);
 }
 
 /**
@@ -91,97 +75,105 @@ export function getTerrainHeightCached(x: number, z: number): number {
   return hx0 + (hx1 - hx0) * tz;
 }
 
-function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
-  const surreal = getSurrealFactor(x, z);
+const tmpColor = new THREE.Color();
+
+/** Shared by every chunk; never disposed. */
+export const terrainMaterial = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  roughness: 0.9,
+  metalness: 0.02,
+});
+
+const blendTmp = new THREE.Color();
+
+export function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
   const slope = 1 - normal.y;
-
-  // Realistic color based on height and slope
-  let realistic = new THREE.Color();
-  if (height < WATER_LEVEL + 1) {
-    realistic.copy(COLOR_SAND);
-  } else if (slope > 0.5) {
-    realistic.copy(COLOR_ROCK);
-  } else if (height > MAX_HEIGHT * 0.7) {
-    realistic.lerpColors(COLOR_ROCK, COLOR_SNOW, smoothstep(MAX_HEIGHT * 0.7, MAX_HEIGHT * 0.9, height));
-  } else if (height > MAX_HEIGHT * 0.3) {
-    realistic.lerpColors(COLOR_GRASS, COLOR_DIRT, smoothstep(MAX_HEIGHT * 0.3, MAX_HEIGHT * 0.6, height));
-  } else {
-    realistic.copy(COLOR_GRASS);
+  const weights = biomeWeights(x, z);
+  if (weights.length === 1) {
+    weights[0].biome.color(x, z, height, slope, tmpColor);
+    return tmpColor;
   }
-
-  // Add noise variation
-  const variation = octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.1;
-  realistic.offsetHSL(0, 0, variation);
-
-  // Surreal color
-  const surIdx = Math.abs(octaveNoise(x, z, 1, 1, 1, 0.01));
-  const surreal1 = new THREE.Color().lerpColors(COLOR_SURREAL_1, COLOR_SURREAL_2, surIdx);
-  const surreal2 = new THREE.Color().lerpColors(COLOR_SURREAL_3, COLOR_SURREAL_4, surIdx);
-  const surrealColor = new THREE.Color().lerpColors(
-    surreal1,
-    surreal2,
-    Math.abs(octaveNoise(x + 500, z + 500, 1, 1, 1, 0.008)),
-  );
-
-  // Blend
-  const result = new THREE.Color();
-  result.lerpColors(realistic, surrealColor, surreal);
-  return result;
+  tmpColor.setRGB(0, 0, 0);
+  for (const { biome, w } of weights) {
+    biome.color(x, z, height, slope, blendTmp);
+    tmpColor.r += blendTmp.r * w;
+    tmpColor.g += blendTmp.g * w;
+    tmpColor.b += blendTmp.b * w;
+  }
+  return tmpColor;
 }
 
-export function createTerrainChunk(
-  chunkX: number,
-  chunkZ: number,
-): THREE.Mesh {
-  const segments = HEIGHT_SEGMENTS;
-  const geometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, segments, segments);
-  geometry.rotateX(-Math.PI / 2);
-
-  const positions = geometry.attributes.position;
-  const heights = new Float32Array(positions.count);
-  const colors = new Float32Array(positions.count * 3);
-  const normals = geometry.attributes.normal;
-
-  const offsetX = chunkX * CHUNK_SIZE;
-  const offsetZ = chunkZ * CHUNK_SIZE;
-
-  // Displace heights
-  for (let i = 0; i < positions.count; i++) {
-    const wx = positions.getX(i) + offsetX;
-    const wz = positions.getZ(i) + offsetZ;
-    const h = getTerrainHeight(wx, wz);
-    positions.setY(i, h);
-    heights[i] = h;
-  }
-
-  geometry.computeVertexNormals();
+/** Store a chunk's full-resolution heights for gameplay lookups. */
+export function storeChunkHeights(chunkX: number, chunkZ: number, heights: Float32Array) {
   chunkHeights.set(`${chunkX},${chunkZ}`, heights);
+}
 
-  // Vertex colors
-  const tmpNormal = new THREE.Vector3();
-  for (let i = 0; i < positions.count; i++) {
-    const wx = positions.getX(i) + offsetX;
-    const wz = positions.getZ(i) + offsetZ;
-    const wy = positions.getY(i);
-    tmpNormal.set(normals.getX(i), normals.getY(i), normals.getZ(i));
-    const color = getTerrainColor(wx, wz, wy, tmpNormal);
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
+/** How far the edge skirt hangs down; hides cracks between chunks drawn at different detail. */
+const SKIRT_DROP = 4;
+
+/**
+ * Terrain geometry for a chunk, using every `step`-th vertex of its full-resolution data
+ * (1 = full detail, 2 = half, 4 = quarter), plus a skirt around the edge.
+ */
+export function buildChunkGeometry(data: { heights: Float32Array; normals: Float32Array; colors: Float32Array }, step: number): THREE.BufferGeometry {
+  const row = HEIGHT_SEGMENTS + 1;
+  const n = HEIGHT_SEGMENTS / step; // cells per side
+  const side = n + 1;
+  const cell = CHUNK_SIZE / n;
+  const half = CHUNK_SIZE / 2;
+
+  // Edge vertices, walked around the perimeter, each get a dropped copy for the skirt.
+  const edge: [number, number][] = [];
+  for (let i = 0; i < n; i++) edge.push([i, 0]);
+  for (let j = 0; j < n; j++) edge.push([n, j]);
+  for (let i = n; i > 0; i--) edge.push([i, n]);
+  for (let j = n; j > 0; j--) edge.push([0, j]);
+
+  const count = side * side + edge.length;
+  const pos = new Float32Array(count * 3);
+  const nor = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+
+  const put = (v: number, i: number, j: number, drop: number) => {
+    const src = i * step + j * step * row;
+    pos[v * 3] = -half + i * cell;
+    pos[v * 3 + 1] = data.heights[src] - drop;
+    pos[v * 3 + 2] = -half + j * cell;
+    for (let c = 0; c < 3; c++) {
+      nor[v * 3 + c] = data.normals[src * 3 + c];
+      col[v * 3 + c] = data.colors[src * 3 + c];
+    }
+  };
+  for (let j = 0; j < side; j++) for (let i = 0; i < side; i++) put(i + j * side, i, j, 0);
+  edge.forEach(([i, j], e) => put(side * side + e, i, j, SKIRT_DROP));
+
+  const index: number[] = [];
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const a = i + j * side;
+      const b = i + (j + 1) * side;
+      const c = i + 1 + (j + 1) * side;
+      const d = i + 1 + j * side;
+      index.push(a, b, d, b, c, d);
+    }
+  }
+  // Skirt: a strip from each edge vertex down to its dropped copy, drawn from both sides.
+  for (let e = 0; e < edge.length; e++) {
+    const [i0, j0] = edge[e];
+    const [i1, j1] = edge[(e + 1) % edge.length];
+    const top0 = i0 + j0 * side;
+    const top1 = i1 + j1 * side;
+    const low0 = side * side + e;
+    const low1 = side * side + ((e + 1) % edge.length);
+    index.push(top0, low0, top1, top1, low0, low1);
+    index.push(top0, top1, low0, top1, low1, low0);
   }
 
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.85,
-    metalness: 0.05,
-    flatShading: false,
-  });
-
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(offsetX, 0, offsetZ);
-  mesh.receiveShadow = true;
-  mesh.castShadow = false;
-  return mesh;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(index);
+  geo.computeBoundingSphere();
+  return geo;
 }

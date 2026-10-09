@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { getTerrainHeightCached, getSurrealFactor, HALF_WORLD } from './terrain';
+import { getTerrainHeightCached } from './terrain';
+import { type BlockQuery, NO_BLOCKS } from './block-query';
 
 const PERSON_COUNT = 230;
 const WANDER_SPEED = 1.0;
@@ -19,6 +20,10 @@ const STACK_HEIGHT = 1.4;
 const WATER_LEVEL = 0;
 const DROWN_TIME = 10;
 const DROWNING_ANIM_TIME = 3; // seconds of drowning animation before death
+/** People farther than this from the player are moved to a fresh spot near them. */
+const RECYCLE_DIST = 420;
+const SPAWN_MIN = 60;
+const SPAWN_MAX = 380;
 
 type PersonState = 'WANDER' | 'IDLE' | 'CHASE' | 'RIDING' | 'DROWNING' | 'DEAD' | 'FLEE';
 
@@ -158,6 +163,8 @@ export class People {
 
   private dummy = new THREE.Object3D();
   private colorTmp = new THREE.Color();
+  /** Placed blocks; people walk around them. */
+  blocks: BlockQuery = NO_BLOCKS;
 
   constructor() {
     const geometry = createPersonGeometry();
@@ -198,13 +205,9 @@ export class People {
 
     let placed = 0;
     for (let i = 0; i < PERSON_COUNT * 5 && placed < PERSON_COUNT; i++) {
-      const x = (Math.random() - 0.5) * HALF_WORLD * 1.4;
-      const z = (Math.random() - 0.5) * HALF_WORLD * 1.4;
-      const surreal = getSurrealFactor(x, z);
-      if (surreal > 0.6) continue;
-
-      const h = getTerrainHeightCached(x, z);
-      if (h < 1 || h > 20) continue;
+      const spot = this.pickSpot(0, 0, 20, SPAWN_MAX);
+      if (!spot) continue;
+      const { x, z, h } = spot;
 
       const heading = Math.random() * Math.PI * 2;
       const scale = 0.8 + Math.random() * 0.4;
@@ -267,6 +270,10 @@ export class People {
     for (let i = 0; i < this.mesh.count; i++) {
       const p = this.data[i];
 
+      if (this.recycleIfFar(p, otterPos)) {
+        dirty = true;
+        continue;
+      }
       if (p.state === 'DEAD') continue;
 
       if (p.state === 'DROWNING') {
@@ -450,10 +457,13 @@ export class People {
     p.heading = Math.atan2(dx, dz);
     const moveX = Math.sin(p.heading) * CHASE_SPEED * dt;
     const moveZ = Math.cos(p.heading) * CHASE_SPEED * dt;
-    p.x += moveX;
-    p.z += moveZ;
+    // Blocks stop chasers; they have to find a way around
+    if (!this.blocks.isSolid(p.x + moveX, p.y + 0.5, p.z + moveZ)) {
+      p.x += moveX;
+      p.z += moveZ;
+    }
 
-    const th = getTerrainHeightCached(p.x, p.z);
+    const th = this.groundAt(p.x, p.z, p.y);
     if (th >= 0.5) {
       p.y = th;
     }
@@ -491,18 +501,10 @@ export class People {
     p.x += moveX;
     p.z += moveZ;
 
-    const worldR = HALF_WORLD * 0.65;
-    const worldRSq = worldR * worldR;
-    const dSq = p.x * p.x + p.z * p.z;
-    if (dSq > worldRSq) {
-      p.heading += Math.PI;
-      p.x -= moveX * 2;
-      p.z -= moveZ * 2;
-    }
-
-    const th = getTerrainHeightCached(p.x, p.z);
-    if (th < 0.5) {
-      p.heading += Math.PI * 0.5;
+    const th = this.groundAt(p.x, p.z, p.y);
+    if (th < 0.5 || this.blocks.isSolid(p.x, p.y + 0.5, p.z)) {
+      // Water or a block ahead: back off and turn away
+      p.heading += Math.PI * (0.5 + Math.random() * 0.5);
       p.x -= moveX;
       p.z -= moveZ;
     } else {
@@ -525,6 +527,65 @@ export class People {
     this.dummy.rotation.set(0, p.heading, 0);
     this.dummy.updateMatrix();
     this.mesh.setMatrixAt(i, this.dummy.matrix);
+  }
+
+  /**
+   * Endless world: someone left far behind (wandering, idle, chasing or dead) reappears
+   * as a fresh hiker somewhere around the player. Riders, fliers and drowners are left alone.
+   */
+  private recycleIfFar(p: Person, otterPos: THREE.Vector3): boolean {
+    if (p.state === 'RIDING' || p.state === 'FLEE' || p.state === 'DROWNING') return false;
+    const x = p.state === 'DEAD' ? p.drowningX || p.x : p.x;
+    const z = p.state === 'DEAD' ? p.drowningZ || p.z : p.z;
+    const dx = x - otterPos.x;
+    const dz = z - otterPos.z;
+    if (dx * dx + dz * dz < RECYCLE_DIST * RECYCLE_DIST) return false;
+
+    const spot = this.pickSpot(otterPos.x, otterPos.z, SPAWN_MIN, SPAWN_MAX);
+    if (!spot) return false;
+    p.x = spot.x;
+    p.z = spot.z;
+    p.y = spot.h;
+    p.state = 'WANDER';
+    p.heading = Math.random() * Math.PI * 2;
+    p.wanderTimer = 0;
+    p.underwaterTimer = 0;
+    p.drowningTimer = 0;
+    p.drowningX = 0;
+    p.drowningZ = 0;
+    p.fleeTimer = 0;
+    p.fleePhase = 0;
+    p.stackSlot = -1;
+    return true;
+  }
+
+  /** A random dry, walkable spot (not inside a block) in a ring around (cx, cz), or null. */
+  private pickSpot(cx: number, cz: number, minR: number, maxR: number): { x: number; z: number; h: number } | null {
+    for (let tries = 0; tries < 12; tries++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = minR + Math.random() * (maxR - minR);
+      const x = cx + Math.cos(a) * r;
+      const z = cz + Math.sin(a) * r;
+      const h = getTerrainHeightCached(x, z);
+      if (h >= 1 && h <= 40 && !this.blocks.isSolid(x, h + 0.5, z)) return { x, z, h };
+    }
+    return null;
+  }
+
+  /** Terrain height, or the top of a block that someone at height y could step onto. */
+  private groundAt(x: number, z: number, y: number): number {
+    return Math.max(getTerrainHeightCached(x, z), this.blocks.supportHeight(x, z, y + 0.6));
+  }
+
+  /** Is any walking person within r of the point? */
+  isNear(x: number, y: number, z: number, r = 1): boolean {
+    for (let i = 0; i < this.mesh.count; i++) {
+      const p = this.data[i];
+      if (p.state === 'DEAD' || p.state === 'RIDING') continue;
+      const dx = p.x - x, dy = p.y - y, dz = p.z - z;
+      if (dx * dx + dy * dy + dz * dz < r * r) return true;
+    }
+    return false;
   }
 
   repelAll(originX: number, originZ: number) {

@@ -6,12 +6,12 @@ export class Skybox {
 
   constructor() {
     // Procedural sky using a large sphere with gradient
-    const geometry = new THREE.SphereGeometry(1500, 32, 15);
+    const geometry = new THREE.SphereGeometry(900, 32, 15);
     const material = new THREE.ShaderMaterial({
       uniforms: {
-        topColor: { value: new THREE.Color(0x0077ff) },
-        bottomColor: { value: new THREE.Color(0xaaddff) },
-        sunColor: { value: new THREE.Color(0xffffee) },
+        topColor: { value: new THREE.Color(0x5f8fc2) },
+        bottomColor: { value: new THREE.Color(0xc9d6e0) },
+        sunColor: { value: new THREE.Color(0xfff3dc) },
         sunDirection: { value: new THREE.Vector3(0.5, 0.8, 0.3).normalize() },
         offset: { value: 20 },
         exponent: { value: 0.6 },
@@ -19,8 +19,8 @@ export class Skybox {
       vertexShader: `
         varying vec3 vWorldPosition;
         void main() {
-          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-          vWorldPosition = worldPosition.xyz;
+          // Direction from the sky's center (which follows the camera)
+          vWorldPosition = position;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
@@ -52,6 +52,21 @@ export class Skybox {
     });
 
     this.sky = new THREE.Mesh(geometry, material);
+    // Sky must not be fogged and must always surround the camera.
+    material.fog = false;
+    this.sky.frustumCulled = false;
     this.sunDirection.copy((material.uniforms.sunDirection.value as THREE.Vector3));
+  }
+
+  /** Change the sky gradient (blended per landscape). */
+  setColors(top: THREE.Color, bottom: THREE.Color) {
+    const u = (this.sky.material as THREE.ShaderMaterial).uniforms;
+    (u.topColor.value as THREE.Color).copy(top);
+    (u.bottomColor.value as THREE.Color).copy(bottom);
+  }
+
+  /** Keep the sky centered on the camera so it never ends in an endless world. */
+  update(cameraPos: THREE.Vector3) {
+    this.sky.position.copy(cameraPos);
   }
 }

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { getSurrealFactor } from './terrain';
+import { octaveNoise } from '../utils/noise';
+import { smoothstep } from '../utils/math-helpers';
 
 const RAIN_COUNT = 8000;
 const SNOW_COUNT = 4000;
@@ -67,10 +68,16 @@ export class Weather {
     this.group.add(this.snowMesh);
   }
 
-  update(dt: number, time: number, playerX: number, playerY: number, playerZ: number) {
-    // Weather intensity based on surreal factor (distance from center)
-    const surreal = getSurrealFactor(playerX, playerZ);
-    this.intensity = surreal;
+  /**
+   * `rain`: how rainy this landscape is (0 = never, 1 = very often).
+   * `snow`: 0..1 share of the weather that falls as snow (Arctic) — high tops always get snow.
+   */
+  update(dt: number, time: number, playerX: number, playerY: number, playerZ: number, rain = 0.5, snow = 0) {
+    // Showers drift through; rainier landscapes get them more often and for longer.
+    // rain 0.5 (Highlands) starts showers at 0.35, exactly as before landscapes existed.
+    const start = 0.6 - rain * 0.5;
+    this.intensity = rain <= 0.01 ? 0 : smoothstep(start, start + 0.4, octaveNoise(time * 0.02, 7.3, 2, 0.5, 2, 1));
+    const highUp = playerY > 60 || snow > 0.5;
 
     // Center particles around the player
     this.group.position.set(playerX, playerY, playerZ);
@@ -78,7 +85,7 @@ export class Weather {
     // Rain visibility and animation
     const rainMat = this.rainMesh.material as THREE.PointsMaterial;
     rainMat.opacity = this.intensity * 0.7;
-    this.rainMesh.visible = this.intensity > 0.05;
+    this.rainMesh.visible = !highUp && this.intensity > 0.05;
 
     if (this.rainMesh.visible) {
       const windX = Math.sin(time * 0.7) * 8 * this.intensity;
@@ -111,7 +118,7 @@ export class Weather {
     // Snow visibility and animation
     const snowMat = this.snowMesh.material as THREE.PointsMaterial;
     snowMat.opacity = this.intensity * 0.9;
-    this.snowMesh.visible = this.intensity > 0.1;
+    this.snowMesh.visible = highUp && this.intensity > 0.1;
 
     if (this.snowMesh.visible) {
       for (let i = 0; i < SNOW_COUNT; i++) {
