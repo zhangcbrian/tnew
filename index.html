@@ -137,6 +137,72 @@
     #touch-jump { right: 30px; bottom: 100px; }
     #touch-fly-down { right: 100px; bottom: 30px; }
     #touch-camera { right: 30px; bottom: 190px; font-size: 1rem; }
+
+    /* Character creator */
+    .menu-screen {
+      position: fixed; inset: 0; z-index: 110;
+      display: none; flex-direction: column;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff; font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .menu-screen.visible { display: flex; }
+    #preview-canvas {
+      position: fixed; inset: 0; z-index: 120; pointer-events: none; display: none;
+    }
+    .menu-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+    .menu-header h1 {
+      flex: 1; margin: 0; font-size: clamp(1.2rem, 4vw, 2rem); font-weight: 700;
+      background: linear-gradient(90deg, #f6d365, #fda085);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .menu-btn {
+      padding: 0.7rem 1.6rem; font-size: 1.1rem; font-weight: 600; font-family: inherit;
+      border: none; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(135deg, #f6d365, #fda085);
+      color: #1a1a2e; transition: transform 0.15s, opacity 0.15s;
+    }
+    .menu-btn:hover:not(:disabled) { transform: scale(1.05); }
+    .menu-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .menu-btn.secondary { background: rgba(255,255,255,0.15); color: #fff; }
+    .menu-scroll { flex: 1; overflow-y: auto; padding: 8px 16px 32px; }
+    .menu-scroll h2 { margin: 18px 0 10px; font-size: 1.2rem; font-weight: 600; color: #cfe3ff; }
+    .card-grid {
+      display: grid; gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+    .card {
+      padding: 0; border: 3px solid transparent; border-radius: 14px; cursor: pointer;
+      background: rgba(255,255,255,0.08); color: #fff; font-family: inherit;
+      overflow: hidden; transition: border-color 0.15s, transform 0.15s;
+    }
+    .card:hover { transform: translateY(-2px); }
+    .card.selected { border-color: #f6d365; box-shadow: 0 0 16px rgba(246,211,101,0.5); }
+    .card-view {
+      display: block; aspect-ratio: 1;
+      background: linear-gradient(#5fb3e6 0%, #9fd6f5 55%, #cfeffd 100%);
+    }
+    .card-name { display: block; padding: 8px 4px; font-size: 1rem; font-weight: 600; }
+    #cs-random { display: block; margin: 24px auto 0; }
+    .color-layout {
+      display: flex; flex-wrap: wrap; gap: 24px; align-items: center; justify-content: center;
+    }
+    #color-preview {
+      width: min(460px, 100%); aspect-ratio: 1; border-radius: 18px;
+      background: linear-gradient(#5fb3e6 0%, #9fd6f5 55%, #cfeffd 100%);
+    }
+    .color-slots { display: flex; flex-direction: column; gap: 14px; min-width: 240px; }
+    .color-slot {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      font-size: 1.15rem; font-weight: 600;
+    }
+    .color-slot input {
+      width: 64px; height: 44px; padding: 0; border: 2px solid rgba(255,255,255,0.4);
+      border-radius: 10px; background: none; cursor: pointer;
+    }
+    #copy-wings { margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -147,6 +213,38 @@
     <div id="loading-bar-container"><div id="loading-bar"></div></div>
     <div id="loading-status">Initializing...</div>
     <button id="play-btn">Play Game</button>
+  </div>
+
+  <div id="character-select" class="menu-screen">
+    <div class="menu-header">
+      <h1>Choose your animal</h1>
+      <button id="cs-submit" class="menu-btn" disabled>Submit</button>
+    </div>
+    <div id="cs-scroll" class="menu-scroll">
+      <h2>Animals</h2>
+      <div id="cs-animals" class="card-grid"></div>
+      <h2>Wings</h2>
+      <div id="cs-wings" class="card-grid"></div>
+      <button id="cs-random" class="menu-btn secondary">&#127922; Random Pick</button>
+    </div>
+  </div>
+
+  <div id="color-screen" class="menu-screen">
+    <div class="menu-header">
+      <button id="color-back" class="menu-btn secondary">&larr; Back</button>
+      <h1>Color your animal</h1>
+      <button id="color-start" class="menu-btn">Start!</button>
+    </div>
+    <div id="color-scroll" class="menu-scroll color-layout">
+      <div id="color-preview"></div>
+      <div class="color-slots">
+        <label class="color-slot">Body <input type="color" id="color-body"></label>
+        <label class="color-slot">Belly <input type="color" id="color-belly"></label>
+        <label class="color-slot">Left wing <input type="color" id="color-wing-left"></label>
+        <label class="color-slot">Right wing <input type="color" id="color-wing-right"></label>
+        <button id="copy-wings" class="menu-btn secondary">Copy left wing &rarr; right wing</button>
+      </div>
+    </div>
   </div>
 
   <div id="pause-screen">

@@ -12,6 +12,8 @@ import { LoadingScreen } from './ui/loading';
 import { GameOverScreen } from './ui/game-over';
 import { HUD } from './ui/hud';
 import { PauseScreen } from './ui/pause-screen';
+import { CharacterSelect } from './ui/character-select';
+import { ColorScreen } from './ui/color-screen';
 import { RocketSystem } from './character/rockets';
 import { Weather } from './world/weather';
 import { Animals } from './world/animals';
@@ -110,11 +112,17 @@ export class Game {
     this.pauseScreen = new PauseScreen();
     this.hud = new HUD();
 
-    // Wire up title screen play button
-    this.loadingScreen.onPlay(() => {
-      this.state = 'playing';
-      this.hud.show();
+    // Title screen Play -> pick animal & wings -> color -> play
+    const characterSelect = new CharacterSelect();
+    const colorScreen = new ColorScreen();
+    const openPicker = () => characterSelect.open((sel) => {
+      colorScreen.open(sel.animal, sel.wings, openPicker, (choice) => {
+        this.otter.setCharacter(choice);
+        this.state = 'playing';
+        this.hud.show();
+      });
     });
+    this.loadingScreen.onPlay(openPicker);
 
     // Resize
     window.addEventListener('resize', this.onResize, { passive: true });
