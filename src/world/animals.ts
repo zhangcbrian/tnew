@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { getTerrainHeightCached } from './terrain';
 import type { BlockQuery } from './block-query';
 import { NO_BLOCKS } from './block-query';
+import { dominantBiome, type BiomeId } from './biomes';
 
 /** Anything farther than this from the player is moved to a fresh spot near them. */
 const RECYCLE_DIST = 420;
@@ -38,6 +39,8 @@ interface Species {
   speed: [number, number];
   /** Herd size for kind 'herd' */
   herdSize?: number;
+  /** Landscapes this species lives in */
+  biomes: BiomeId[];
 }
 
 function createDeerGeometry(): THREE.BufferGeometry {
@@ -282,22 +285,106 @@ function facePlusZ(geo: THREE.BufferGeometry): THREE.BufferGeometry {
   return geo.rotateY(-Math.PI / 2);
 }
 
+function createCamelGeometry(): THREE.BufferGeometry {
+  const g: THREE.BufferGeometry[] = [];
+  g.push(new THREE.SphereGeometry(0.5, 7, 5).scale(1.6, 0.9, 0.9).translate(0, 1.6, 0)); // body
+  g.push(new THREE.SphereGeometry(0.35, 6, 4).translate(0, 2.1, 0)); // hump
+  g.push(new THREE.CylinderGeometry(0.12, 0.18, 1.1, 5).rotateZ(-0.7).translate(0.95, 2.1, 0)); // neck
+  g.push(new THREE.BoxGeometry(0.45, 0.22, 0.22).translate(1.4, 2.5, 0)); // head
+  for (const x of [-0.5, 0.5]) for (const z of [-0.22, 0.22]) {
+    g.push(new THREE.CylinderGeometry(0.07, 0.06, 1.3, 4).translate(x, 0.65, z));
+  }
+  return mergeGeos(g);
+}
+
+function createZebraGeometry(): { body: THREE.BufferGeometry; stripes: THREE.BufferGeometry } {
+  const g: THREE.BufferGeometry[] = [];
+  g.push(new THREE.CylinderGeometry(0.35, 0.38, 1.3, 7).rotateZ(Math.PI / 2).translate(0, 1.0, 0));
+  g.push(new THREE.CylinderGeometry(0.13, 0.2, 0.7, 5).rotateZ(-0.6).translate(0.75, 1.35, 0));
+  g.push(new THREE.BoxGeometry(0.5, 0.22, 0.2).translate(1.1, 1.55, 0));
+  for (const x of [-0.45, 0.45]) for (const z of [-0.18, 0.18]) {
+    g.push(new THREE.CylinderGeometry(0.07, 0.06, 0.85, 4).translate(x, 0.42, z));
+  }
+  const stripes: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 7; i++) {
+    stripes.push(new THREE.TorusGeometry(0.385, 0.035, 3, 10).rotateY(Math.PI / 2).translate(-0.55 + i * 0.18, 1.0, 0));
+  }
+  stripes.push(new THREE.BoxGeometry(0.6, 0.12, 0.06).translate(0.75, 1.62, 0)); // mane
+  return { body: mergeGeos(g), stripes: mergeGeos(stripes) };
+}
+
+function createGiraffeGeometry(): { body: THREE.BufferGeometry; spots: THREE.BufferGeometry } {
+  const g: THREE.BufferGeometry[] = [];
+  g.push(new THREE.SphereGeometry(0.5, 7, 5).scale(1.4, 0.8, 0.8).rotateZ(0.25).translate(0, 2.2, 0));
+  g.push(new THREE.CylinderGeometry(0.1, 0.18, 2.2, 5).rotateZ(-0.35).translate(0.75, 3.4, 0));
+  g.push(new THREE.BoxGeometry(0.5, 0.22, 0.2).translate(1.2, 4.45, 0));
+  for (const x of [-0.45, 0.45]) for (const z of [-0.2, 0.2]) {
+    g.push(new THREE.CylinderGeometry(0.06, 0.05, 2.0, 4).translate(x, 1.0, z));
+  }
+  const spots: THREE.BufferGeometry[] = [];
+  const spotPos: [number, number, number][] = [[-0.3, 2.45, 0.38], [0.2, 2.5, 0.37], [-0.1, 2.15, 0.4], [0.35, 2.2, 0.36],
+    [-0.3, 2.45, -0.38], [0.2, 2.5, -0.37], [-0.1, 2.15, -0.4], [0.35, 2.2, -0.36], [0.6, 3.0, 0.12], [0.85, 3.6, -0.1]];
+  for (const [x, y, z] of spotPos) spots.push(new THREE.BoxGeometry(0.2, 0.18, 0.05).translate(x, y, z));
+  return { body: mergeGeos(g), spots: mergeGeos(spots) };
+}
+
+function createElephantGeometry(): { body: THREE.BufferGeometry; tusks: THREE.BufferGeometry } {
+  const g: THREE.BufferGeometry[] = [];
+  g.push(new THREE.SphereGeometry(1, 8, 6).scale(1.4, 1, 1).translate(0, 2.1, 0));
+  g.push(new THREE.SphereGeometry(0.6, 7, 5).translate(1.4, 2.5, 0));
+  g.push(new THREE.CylinderGeometry(0.1, 0.22, 1.6, 6).rotateZ(0.15).translate(1.85, 1.6, 0)); // trunk
+  for (const z of [-0.55, 0.55]) g.push(new THREE.BoxGeometry(0.1, 0.9, 0.7).translate(1.2, 2.5, z)); // ears
+  for (const x of [-0.7, 0.7]) for (const z of [-0.45, 0.45]) {
+    g.push(new THREE.CylinderGeometry(0.28, 0.3, 1.4, 6).translate(x, 0.7, z));
+  }
+  const tusks: THREE.BufferGeometry[] = [];
+  for (const z of [-0.25, 0.25]) tusks.push(new THREE.ConeGeometry(0.07, 0.8, 5).rotateZ(-1.9).translate(1.95, 2.0, z));
+  return { body: mergeGeos(g), tusks: mergeGeos(tusks) };
+}
+
+const TEMPERATE_SKIES: BiomeId[] = ['highlands', 'fjords', 'ireland', 'alps', 'newzealand'];
+
+/** Every species, and the landscapes it lives in. Shapes are built per species (they're rotated in place). */
 function speciesList(): Species[] {
-  const cow = createHighlandCowGeometry();
-  const sheep = createSheepGeometry();
+  const one = (geo: THREE.BufferGeometry, color: number) => [{ geo, color }];
+  const cow = (color: number) => {
+    const c = createHighlandCowGeometry();
+    return [{ geo: c.body, color }, { geo: c.horns, color: 0xe8dcc0 }];
+  };
+  const sheep = (wool: number, face: number) => {
+    const s = createSheepGeometry();
+    return [{ geo: s.wool, color: wool }, { geo: s.face, color: face }];
+  };
+  const zebra = createZebraGeometry();
+  const giraffe = createGiraffeGeometry();
+  const elephant = createElephantGeometry();
   return [
-    { name: 'deer', kind: 'land', count: 40, parts: [{ geo: createDeerGeometry(), color: 0x8a4b2a }], scale: [0.9, 1.3], speed: [1.5, 3] },
-    { name: 'rabbit', kind: 'land', count: 50, parts: [{ geo: createRabbitGeometry(), color: 0x8f7a62 }], scale: [0.4, 0.55], speed: [1.5, 3] },
-    { name: 'bird', kind: 'bird', count: 30, parts: [{ geo: createBirdGeometry(), color: 0x6b5d50 }], scale: [0.8, 1.3], speed: [3.5, 5.5] },
-    { name: 'fish', kind: 'fish', count: 50, parts: [{ geo: createFishGeometry(), color: 0x7f8f7a }], scale: [0.6, 1.2], speed: [1.5, 2.5] },
-    {
-      name: 'cow', kind: 'herd', count: 8, herdSize: 4, scale: [0.9, 1.1], speed: [0.4, 0.8],
-      parts: [{ geo: cow.body, color: 0xb5651d }, { geo: cow.horns, color: 0xe8dcc0 }],
-    },
-    {
-      name: 'sheep', kind: 'herd', count: 12, herdSize: 4, scale: [0.8, 1.0], speed: [0.5, 1.0],
-      parts: [{ geo: sheep.wool, color: 0xeeeae0 }, { geo: sheep.face, color: 0x2a2624 }],
-    },
+    // Temperate
+    { name: 'red-deer', kind: 'land', count: 30, biomes: ['highlands', 'fjords'], parts: one(createDeerGeometry(), 0x8a4b2a), scale: [0.9, 1.3], speed: [1.5, 3] },
+    { name: 'rabbit', kind: 'land', count: 40, biomes: ['highlands', 'ireland', 'newzealand'], parts: one(createRabbitGeometry(), 0x8f7a62), scale: [0.4, 0.55], speed: [1.5, 3] },
+    { name: 'bird', kind: 'bird', count: 30, biomes: TEMPERATE_SKIES, parts: one(createBirdGeometry(), 0x6b5d50), scale: [0.8, 1.3], speed: [3.5, 5.5] },
+    { name: 'fish', kind: 'fish', count: 40, biomes: [...TEMPERATE_SKIES, 'amazon'], parts: one(createFishGeometry(), 0x7f8f7a), scale: [0.6, 1.2], speed: [1.5, 2.5] },
+    { name: 'highland-cow', kind: 'herd', count: 8, herdSize: 4, biomes: ['highlands'], parts: cow(0xb5651d), scale: [0.9, 1.1], speed: [0.4, 0.8] },
+    { name: 'sheep', kind: 'herd', count: 16, herdSize: 4, biomes: ['highlands', 'ireland', 'newzealand', 'fjords'], parts: sheep(0xeeeae0, 0x2a2624), scale: [0.8, 1.0], speed: [0.5, 1.0] },
+    { name: 'dairy-cow', kind: 'herd', count: 8, herdSize: 4, biomes: ['ireland'], parts: cow(0x2a2a2a), scale: [0.9, 1.1], speed: [0.4, 0.8] },
+    { name: 'brown-cow', kind: 'herd', count: 8, herdSize: 4, biomes: ['alps'], parts: cow(0x8a5a3a), scale: [0.9, 1.1], speed: [0.4, 0.8] },
+    { name: 'goat', kind: 'herd', count: 8, herdSize: 4, biomes: ['alps'], parts: sheep(0xd8d4cc, 0x6a5a4a), scale: [0.7, 0.9], speed: [0.6, 1.2] },
+    // Desert and canyon
+    { name: 'camel', kind: 'land', count: 10, biomes: ['sahara'], parts: one(createCamelGeometry(), 0xc49a5a), scale: [0.9, 1.1], speed: [0.8, 1.5] },
+    { name: 'vulture', kind: 'bird', count: 12, biomes: ['sahara', 'savanna', 'southwest'], parts: one(createBirdGeometry(), 0x3a3028), scale: [1.2, 1.6], speed: [3, 4.5] },
+    { name: 'pronghorn', kind: 'land', count: 16, biomes: ['southwest'], parts: one(createDeerGeometry(), 0xc79a5a), scale: [0.8, 1.0], speed: [2, 3.5] },
+    { name: 'jackrabbit', kind: 'land', count: 20, biomes: ['southwest', 'sahara'], parts: one(createRabbitGeometry(), 0xa08a6a), scale: [0.45, 0.6], speed: [2, 3.5] },
+    // Rainforest
+    { name: 'macaw', kind: 'bird', count: 30, biomes: ['amazon'], parts: one(createBirdGeometry(), 0xd63a2a), scale: [0.7, 1.0], speed: [3.5, 5] },
+    { name: 'capybara', kind: 'land', count: 20, biomes: ['amazon'], parts: one(createRabbitGeometry(), 0x7a5a3a), scale: [1.1, 1.4], speed: [0.8, 1.5] },
+    // Savanna
+    { name: 'zebra', kind: 'herd', count: 16, herdSize: 4, biomes: ['savanna'], parts: [{ geo: zebra.body, color: 0xf2f0ea }, { geo: zebra.stripes, color: 0x1e1e1e }], scale: [0.9, 1.1], speed: [1, 2] },
+    { name: 'giraffe', kind: 'land', count: 10, biomes: ['savanna'], parts: [{ geo: giraffe.body, color: 0xe0b45a }, { geo: giraffe.spots, color: 0x8a5a2a }], scale: [0.9, 1.1], speed: [0.8, 1.4] },
+    { name: 'elephant', kind: 'herd', count: 8, herdSize: 4, biomes: ['savanna'], parts: [{ geo: elephant.body, color: 0x8a8580 }, { geo: elephant.tusks, color: 0xf0ead8 }], scale: [0.9, 1.2], speed: [0.5, 1] },
+    // Arctic
+    { name: 'reindeer', kind: 'land', count: 24, biomes: ['arctic'], parts: one(createDeerGeometry(), 0x9a8a78), scale: [0.9, 1.2], speed: [1, 2.5] },
+    { name: 'arctic-fox', kind: 'land', count: 14, biomes: ['arctic'], parts: one(createRabbitGeometry(), 0xf2f2f2), scale: [0.5, 0.65], speed: [2, 3.5] },
+    { name: 'snow-bird', kind: 'bird', count: 16, biomes: ['arctic'], parts: one(createBirdGeometry(), 0xeeeeee), scale: [0.7, 1.0], speed: [3.5, 5] },
   ];
 }
 
@@ -359,6 +446,7 @@ class SpeciesGroup {
       const r = minR + Math.random() * (maxR - minR);
       const x = cx + Math.cos(a) * r;
       const z = cz + Math.sin(a) * r;
+      if (!this.sp.biomes.includes(dominantBiome(x, z).id)) continue;
       const y = habitat(this.sp.kind, x, z);
       if (y === null || this.blocks.isSolid(x, y + 0.5, z)) continue;
       this.place(i, x, y, z);
