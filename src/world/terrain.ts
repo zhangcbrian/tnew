@@ -1,47 +1,23 @@
 import * as THREE from 'three';
-import { octaveNoise, ridgedNoise } from '../utils/noise';
+import { biomeWeights } from './biomes';
 import { smoothstep, lerp } from '../utils/math-helpers';
 
 export const CHUNK_SIZE = 64;
 const HEIGHT_SEGMENTS = 32;
 export const WATER_LEVEL = 0;
-const SNOW_LINE = 72;
-
-// Scottish Highlands palette
-const COLOR_PEAT = new THREE.Color(0x3b3226);
-const COLOR_SHINGLE = new THREE.Color(0x8a8272);
-const COLOR_MOOR = new THREE.Color(0x7a8450);
-const COLOR_BRACKEN = new THREE.Color(0x9a6a34);
-const COLOR_HEATHER = new THREE.Color(0x6e4b5c);
-const COLOR_ROCK = new THREE.Color(0x7d7d80);
-const COLOR_SNOW = new THREE.Color(0xeef0f4);
-
 // Heightfield cache populated as terrain chunks are generated. This lets runtime
 // systems (player/AI/camera) query terrain heights without recomputing noise.
 const chunkHeights = new Map<string, Float32Array>();
 
 /**
- * Highland terrain: broad U-shaped glens (whose low floors fill with lochs)
- * between rounded hills, with rocky ridges on the highest ground.
+ * Ground height: the landscape (biome) of this region, blended with its neighbors
+ * near region edges. The spawn point sits on a gentle, dry patch.
  */
 export function getTerrainHeight(x: number, z: number): number {
-  // 0 = glen floor, 1 = upland. Raised to a power so floors are wide and sides steep.
-  const glen = smoothstep(-0.35, 0.45, octaveNoise(x, z, 3, 0.5, 2, 0.0016));
-  const glenShape = Math.pow(glen, 1.5);
-
-  // Glen floors hover around the water line; where they dip below it, there's a loch.
-  const floor = 1.5 + octaveNoise(x + 3000, z - 1700, 2, 0.5, 2, 0.0025) * 7;
-
-  const hills = octaveNoise(x - 900, z + 400, 4, 0.5, 2, 0.006);
-  const ridge = Math.pow(ridgedNoise(x + 5000, z + 5000, 0.004), 2);
-  const upland = 18 + hills * 20 + ridge * 50 * smoothstep(0.5, 1, glen);
-
-  let h = lerp(floor, upland, glenShape);
-  h += octaveNoise(x + 1000, z + 1000, 2, 0.4, 2.5, 0.03) * 1.5;
-
-  // Gentle, dry glen floor at spawn
+  let h = 0;
+  for (const { biome, w } of biomeWeights(x, z)) h += biome.height(x, z) * w;
   const d = Math.sqrt(x * x + z * z);
-  return lerp(3, h, smoothstep(40, 140, d));
+  return d < 140 ? lerp(3, h, smoothstep(40, 140, d)) : h;
 }
 
 /** Steepness at (x, z): 0 = flat, 1 = vertical. */
@@ -107,32 +83,23 @@ export const terrainMaterial = new THREE.MeshStandardMaterial({
   metalness: 0.02,
 });
 
+const blendTmp = new THREE.Color();
+
 function getTerrainColor(x: number, z: number, height: number, normal: THREE.Vector3): THREE.Color {
   const slope = 1 - normal.y;
-  const c = tmpColor;
-  const patch = octaveNoise(x * 2, z * 2, 2, 0.5, 2, 0.02); // -1..1 patchiness
-
-  if (height < WATER_LEVEL - 0.5) {
-    c.copy(COLOR_PEAT);
-  } else if (height < 1.2) {
-    c.lerpColors(COLOR_SHINGLE, COLOR_MOOR, smoothstep(0.2, 1.2, height));
-  } else {
-    // Low ground: moor grass with rusty bracken patches; higher: heather takes over.
-    c.lerpColors(COLOR_MOOR, COLOR_BRACKEN, smoothstep(0.35, 0.7, patch) * (1 - smoothstep(25, 40, height)));
-    const heather = smoothstep(8, 30, height) * smoothstep(-0.4, 0.3, patch) * (1 - smoothstep(55, 75, height));
-    c.lerp(COLOR_HEATHER, heather * 0.85);
-
-    // Steep slopes and high ridges are bare rock / scree
-    const rock = Math.max(smoothstep(0.3, 0.5, slope), smoothstep(50, 70, height) * 0.8);
-    c.lerp(COLOR_ROCK, rock);
-
-    // Patchy snow on the tops
-    const snow = smoothstep(SNOW_LINE, SNOW_LINE + 10, height + patch * 6) * (1 - smoothstep(0.45, 0.6, slope));
-    c.lerp(COLOR_SNOW, snow);
+  const weights = biomeWeights(x, z);
+  if (weights.length === 1) {
+    weights[0].biome.color(x, z, height, slope, tmpColor);
+    return tmpColor;
   }
-
-  c.offsetHSL(0, 0, octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.04);
-  return c;
+  tmpColor.setRGB(0, 0, 0);
+  for (const { biome, w } of weights) {
+    biome.color(x, z, height, slope, blendTmp);
+    tmpColor.r += blendTmp.r * w;
+    tmpColor.g += blendTmp.g * w;
+    tmpColor.b += blendTmp.b * w;
+  }
+  return tmpColor;
 }
 
 export function createTerrainChunk(
