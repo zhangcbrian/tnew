@@ -1,5 +1,6 @@
+import * as THREE from 'three';
 import { ANIMALS, type AnimalId } from '../character/animals';
-import { WING_TYPES, type WingId } from '../character/wings';
+import { Wings, WING_TYPES, type WingId } from '../character/wings';
 import { buildCharacter, defaultColors } from '../character/character';
 import { previewRenderer } from './preview-renderer';
 
@@ -55,13 +56,14 @@ export class CharacterSelect {
       previewRenderer.add(this.viewOf(this.animalCards.get(a.id)!), built.group, this.scroll);
     }
     for (const w of WING_TYPES) {
-      const built = buildCharacter('otter', w.id, defaultColors('otter', w.id));
-      // Show only the wings, spread as if flying.
-      built.group.children.slice().forEach((c) => {
-        if (c !== built.wings!.leftWing && c !== built.wings!.rightWing) c.visible = false;
-      });
-      built.wings!.update(0, 0, true);
-      previewRenderer.add(this.viewOf(this.wingCards.get(w.id)!), built.group, this.scroll);
+      // Wings alone, spread as if flying and tipped toward the viewer.
+      const holder = new THREE.Group();
+      new Wings(holder, w.id, 0.12, 0, w.color).update(0, 0, true);
+      holder.rotation.x = 1.1;
+      holder.position.y = 0.7;
+      const stand = new THREE.Group();
+      stand.add(holder);
+      previewRenderer.add(this.viewOf(this.wingCards.get(w.id)!), stand, this.scroll);
     }
     previewRenderer.start();
   }
