@@ -21,6 +21,12 @@ import { blendClimate, createClimate, dominantBiome } from './world/biomes';
 import { SciaticaSound } from './audio/sciatica-sound';
 import { ShockwaveEffect } from './effects/shockwave';
 
+const MAX_PIXEL_RATIO = 1.5;
+const MIN_RENDER_SCALE = 0.6;
+/** Smoothed frame times (seconds) that count as slow / steady. */
+const SLOW_FRAME = 0.019;
+const STEADY_FRAME = 0.0175;
+
 export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
@@ -54,6 +60,9 @@ export class Game {
   private lastHudBlockIndex = -1;
   private climate = createClimate();
   private climateReady = false;
+  private renderScale = 1;
+  private avgFrame = 1 / 60;
+  private scaleTimer = 0;
   private targetClimate = createClimate();
 
   // Fog reference for falling effect
@@ -64,7 +73,7 @@ export class Game {
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -138,7 +147,7 @@ export class Game {
     requestAnimationFrame(() => {
       this.resizeQueued = false;
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setPixelRatio(this.pixelRatio());
     });
   };
 
@@ -182,6 +191,7 @@ export class Game {
       // Keep streaming the rest of the view while the player is in the menus.
       this.chunkManager.update(this.otter.position.x, this.otter.position.z);
       this.skybox.update(this.cameraSystem.camera.position);
+      this.vegetation?.update(this.cameraSystem.camera.position);
       this.renderer.render(this.scene, this.cameraSystem.camera);
       return;
     }
@@ -279,7 +289,9 @@ export class Game {
     this.chunkManager.update(this.otter.position.x, this.otter.position.z);
     this.water.update(time, this.otter.position.x, this.otter.position.z);
     this.skybox.update(this.cameraSystem.camera.position);
+    this.vegetation.update(this.cameraSystem.camera.position);
     this.applyClimate(dt);
+    this.adaptResolution(dt);
     this.weather.update(dt, time, this.otter.position.x, this.otter.position.y, this.otter.position.z, this.climate.rain, this.climate.snow);
     this.animals.update(dt, time, this.otter.position, this.building);
     this.people.update(dt, time, this.otter.position, this.otter.heading);
@@ -303,14 +315,14 @@ export class Game {
         this.vegetation = new Vegetation();
         this.scene.add(this.vegetation.group);
         this.chunkManager.setCallbacks(
-          (cx, cz) => this.vegetation.addChunk(cx, cz),
+          (cx, cz, plants) => this.vegetation.addChunk(cx, cz, plants),
           (cx, cz) => this.vegetation.removeChunk(cx, cz),
         );
         this.loadPhase = 1;
         break;
       case 1: {
         // Build the glen around spawn; the rest streams in during play.
-        const p = this.chunkManager.preload(0, 0, 5, 6);
+        const p = this.chunkManager.preload(0, 0, 5);
         this.loadingScreen.setProgress(0.05 + p * 0.8, `Shaping the Highlands... ${Math.round(p * 100)}%`);
         if (p >= 1) this.loadPhase = 4;
         break;
@@ -348,6 +360,28 @@ export class Game {
         this.loadingScreen.showTitleScreen();
         this.state = 'title';
         break;
+    }
+  }
+
+  /** Screen resolution: never above 1.5x (sharp enough on Retina, far cheaper than 2x), times the adaptive scale. */
+  private pixelRatio(): number {
+    return Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO) * this.renderScale;
+  }
+
+  /**
+   * Dynamic resolution: if frames stay slow, render fewer pixels; when they've been steady
+   * for a while, try more again. Waits after each change so it doesn't flip back and forth.
+   */
+  private adaptResolution(dt: number) {
+    this.avgFrame += (dt - this.avgFrame) * 0.05;
+    this.scaleTimer += dt;
+    let next = this.renderScale;
+    if (this.avgFrame > SLOW_FRAME && this.scaleTimer > 2) next = Math.max(MIN_RENDER_SCALE, this.renderScale - 0.1);
+    else if (this.avgFrame < STEADY_FRAME && this.scaleTimer > 8) next = Math.min(1, this.renderScale + 0.1);
+    if (next !== this.renderScale) {
+      this.renderScale = next;
+      this.scaleTimer = 0;
+      this.renderer.setPixelRatio(this.pixelRatio());
     }
   }
 

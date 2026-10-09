@@ -5,6 +5,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 export interface PlantType {
   name: string;
   geo: THREE.BufferGeometry;
+  /** Simple version drawn far away. Without one, the plant is only drawn up close. */
+  far?: THREE.BufferGeometry;
   /** Max instances per terrain chunk */
   perChunk: number;
   shadow: boolean;
@@ -283,4 +285,23 @@ export function snowRock() {
     painted(new THREE.DodecahedronGeometry(0.8, 0).scale(1.2, 0.7, 1).translate(0, 0.25, 0), 0x6f7478),
     painted(sphere(0.75, 6, 3, ).scale(1.1, 0.3, 0.9).translate(0, 0.7, 0), 0xf2f5f8),
   ]);
+}
+
+// ---- Far-away versions (a few dozen triangles each), used past the near-detail distance ----
+
+/** A trunk plus one simple crown. `crown` is 'round', 'flat' (umbrella) or 'cone'. */
+export function farTree(trunk: number, trunkH: number, leaves: number, r: number, y: number, crown: 'round' | 'flat' | 'cone' = 'round') {
+  const parts = [painted(cyl(r * 0.08 + 0.1, r * 0.12 + 0.15, trunkH, 3).translate(0, trunkH / 2, 0), trunk)];
+  if (crown === 'cone') parts.push(painted(cone(r, y * 0.9, 5).translate(0, trunkH * 0.4 + y * 0.45, 0), leaves));
+  else if (crown === 'flat') parts.push(painted(sphere(r, 5, 3).scale(1, 0.35, 1).translate(0, y, 0), leaves));
+  else parts.push(painted(sphere(r, 5, 3).translate(0, y, 0), leaves));
+  return merge(parts);
+}
+
+export function farBush(color: number, r = 0.8, y = 0.5) {
+  return painted(sphere(r, 4, 3).scale(1.1, 0.75, 1).translate(0, y, 0), color);
+}
+
+export function farRock(color: number) {
+  return painted(new THREE.OctahedronGeometry(0.8, 0).scale(1.2, 0.6, 1).translate(0, 0.25, 0), color);
 }

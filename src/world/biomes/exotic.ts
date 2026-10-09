@@ -41,11 +41,11 @@ export const sahara: Biome = {
     shade(out, x, z, 0.03);
   },
   plants: [
-    { name: 'palm', geo: P.palm(), perChunk: 14, shadow: true, scale: [0.8, 1.3],
+    { name: 'palm', geo: P.palm(), far: P.farTree(0x7a5c3b, 6.9, 0x4f7f2a, 2.2, 6.9, 'flat'), perChunk: 14, shadow: true, scale: [0.8, 1.3],
       fits: (h, _s, x, z) => h > -0.3 && h < 3 && oasis(x, z) > 0.2 },
     { name: 'dry-shrub', geo: P.dryShrub(), perChunk: 6, shadow: false, scale: [0.6, 1.2],
       fits: (h, s, _x, _z, r) => h > 1.5 && s < 0.3 && r < 0.4 },
-    { name: 'desert-rock', geo: P.boulder(0xa0703f), perChunk: 6, shadow: false, scale: [0.5, 2.5],
+    { name: 'desert-rock', geo: P.boulder(0xa0703f), far: P.farRock(0xa0703f), perChunk: 6, shadow: false, scale: [0.5, 2.5],
       fits: (h, s, x, z) => h > 1.5 && s < 0.8 && octaveNoise(x + 9000, z, 2, 0.5, 2, 0.003) > 0.5 },
   ],
   climate: { skyTop: 0x6fa3d8, skyBottom: 0xf0dcb0, fog: 0xe8d3a8, fogNear: 150, fogFar: 520, water: 0x3f8a8a, waterOpacity: 0.8, rain: 0, snow: false },
@@ -72,9 +72,9 @@ export const amazon: Biome = {
     shade(out, x, z);
   },
   plants: [
-    { name: 'kapok', geo: P.kapok(), perChunk: 4, shadow: true, scale: [0.8, 1.2],
+    { name: 'kapok', geo: P.kapok(), far: P.farTree(0x8a7a66, 22, 0x2e6b26, 6.5, 23, 'flat'), perChunk: 4, shadow: true, scale: [0.8, 1.2],
       fits: (h, s, _x, _z, r) => h > 2 && s < 0.3 && r < 0.6 },
-    { name: 'jungle-tree', geo: P.jungleTree(), perChunk: 40, shadow: true, scale: [0.7, 1.4],
+    { name: 'jungle-tree', geo: P.jungleTree(), far: P.farTree(0x5a4a36, 9, 0x1f5a22, 2.9, 10), perChunk: 40, shadow: true, scale: [0.7, 1.4],
       fits: (h, s) => h > 1.8 && s < 0.45 },
     { name: 'big-leaf', geo: P.bigLeaf(), perChunk: 40, shadow: false, scale: [0.8, 1.8],
       fits: (h, s) => h > 1.5 && s < 0.5 },
@@ -112,13 +112,13 @@ export const southwest: Biome = {
     shade(out, x, z, 0.03);
   },
   plants: [
-    { name: 'saguaro', geo: P.saguaro(), perChunk: 6, shadow: true, scale: [0.7, 1.3],
+    { name: 'saguaro', geo: P.saguaro(), far: P.farTree(0x4f7a3a, 6, 0x4f7a3a, 0.4, 6), perChunk: 6, shadow: true, scale: [0.7, 1.3],
       fits: (h, s, _x, _z, r) => h > 2 && s < 0.2 && r < 0.5 },
     { name: 'sagebrush', geo: P.sagebrush(), perChunk: 22, shadow: false, scale: [0.6, 1.3],
       fits: (h, s) => h > 1 && s < 0.25 },
-    { name: 'juniper', geo: P.juniper(), perChunk: 6, shadow: false, scale: [0.7, 1.3],
+    { name: 'juniper', geo: P.juniper(), far: P.farTree(0x6b4a32, 1.6, 0x4a5f3a, 1.4, 2.1), perChunk: 6, shadow: false, scale: [0.7, 1.3],
       fits: (h, s, _x, _z, r) => h > 20 && s < 0.25 && r < 0.6 },
-    { name: 'red-boulder', geo: P.boulder(0xa4552d), perChunk: 8, shadow: false, scale: [0.5, 2.5],
+    { name: 'red-boulder', geo: P.boulder(0xa4552d), far: P.farRock(0xa4552d), perChunk: 8, shadow: false, scale: [0.5, 2.5],
       fits: (h, s) => h > 1 && s < 0.8 },
   ],
   climate: { skyTop: 0x4a8bd6, skyBottom: 0xf2d2b0, fog: 0xe6c7a2, fogNear: 200, fogFar: 620, water: 0x4a6f6a, waterOpacity: 0.8, rain: 0.05, snow: false },
@@ -153,13 +153,13 @@ export const savanna: Biome = {
     shade(out, x, z, 0.03);
   },
   plants: [
-    { name: 'acacia', geo: P.acacia(), perChunk: 5, shadow: true, scale: [0.8, 1.3],
+    { name: 'acacia', geo: P.acacia(), far: P.farTree(0x5a4330, 4.5, 0x5f7a2e, 3.2, 4.9, 'flat'), perChunk: 5, shadow: true, scale: [0.8, 1.3],
       fits: (h, s, _x, _z, r) => h > 1.5 && s < 0.25 && r < 0.6 },
     { name: 'tall-grass', geo: P.tallGrass(), perChunk: 45, shadow: false, scale: [0.8, 1.5],
       fits: (h, s) => h > 1.5 && s < 0.35 },
-    { name: 'termite-mound', geo: P.termiteMound(), perChunk: 2, shadow: false, scale: [0.6, 1.2],
+    { name: 'termite-mound', geo: P.termiteMound(), far: P.farTree(0xa0583a, 0.1, 0xa0583a, 0.9, 1.5, 'cone'), perChunk: 2, shadow: false, scale: [0.6, 1.2],
       fits: (h, s, _x, _z, r) => h > 1.5 && s < 0.2 && r < 0.5 },
-    { name: 'kopje-rock', geo: P.boulder(0x8f8070), perChunk: 8, shadow: false, scale: [0.8, 3],
+    { name: 'kopje-rock', geo: P.boulder(0x8f8070), far: P.farRock(0x8f8070), perChunk: 8, shadow: false, scale: [0.8, 3],
       fits: (h, _s, x, z) => h > 2 && kopje(x, z) > 0.3 },
   ],
   climate: { skyTop: 0x5f9ad6, skyBottom: 0xf1e0b8, fog: 0xe6d6ae, fogNear: 200, fogFar: 620, water: 0x6a6040, waterOpacity: 0.88, rain: 0.15, snow: false },
@@ -186,9 +186,9 @@ export const arctic: Biome = {
   plants: [
     { name: 'arctic-shrub', geo: P.arcticShrub(), perChunk: 16, shadow: false, scale: [0.6, 1.3],
       fits: (h, s) => h > 0.5 && s < 0.35 },
-    { name: 'snow-rock', geo: P.snowRock(), perChunk: 8, shadow: false, scale: [0.5, 2],
+    { name: 'snow-rock', geo: P.snowRock(), far: P.farRock(0xd8dde2), perChunk: 8, shadow: false, scale: [0.5, 2],
       fits: (h, s) => h > 0.5 && s < 0.7 },
-    { name: 'dwarf-spruce', geo: P.spruce(4, 0x2c4a33), perChunk: 4, shadow: false, scale: [0.6, 1.1],
+    { name: 'dwarf-spruce', geo: P.spruce(4, 0x2c4a33), far: P.farTree(0x5a3d26, 1.2, 0x2c4a33, 0.9, 3.6, 'cone'), perChunk: 4, shadow: false, scale: [0.6, 1.1],
       fits: (h, s, _x, _z, r) => h > 1 && s < 0.3 && r < 0.4 },
   ],
   climate: { skyTop: 0x8fb3d6, skyBottom: 0xe8f0f6, fog: 0xdfe8ef, fogNear: 120, fogFar: 480, water: 0xbcd6e0, waterOpacity: 0.97, rain: 0.4, snow: true },

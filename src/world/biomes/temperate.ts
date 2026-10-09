@@ -45,17 +45,17 @@ export const highlands: Biome = {
     out.offsetHSL(0, 0, octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.04);
   },
   plants: [
-    { name: 'scots-pine', geo: P.scotsPine(), perChunk: 28, shadow: true, scale: [0.8, 1.5],
+    { name: 'scots-pine', geo: P.scotsPine(), far: P.farTree(0x7a4a2e, 6, 0x2f4a2c, 1.9, 6.3, 'flat'), perChunk: 28, shadow: true, scale: [0.8, 1.5],
       fits: (h, s, x, z) => h > 1.5 && h < 45 && s < 0.35 && octaveNoise(x, z, 2, 0.5, 2, 0.01) > 0.25 },
-    { name: 'birch', geo: P.birch(), perChunk: 8, shadow: false, scale: [0.8, 1.2],
+    { name: 'birch', geo: P.birch(), far: P.farTree(0xe8e4dc, 4.5, 0x7d9a48, 1.2, 4.6), perChunk: 8, shadow: false, scale: [0.8, 1.2],
       fits: (h, s, _x, _z, r) => h > 1.5 && h < 30 && s < 0.3 && r < 0.35 },
     { name: 'heather', geo: P.heather(), perChunk: 30, shadow: false, scale: [0.7, 1.6],
       fits: (h, s) => h > 8 && h < 70 && s < 0.45 },
-    { name: 'gorse', geo: P.gorse(), perChunk: 10, shadow: false, scale: [0.7, 1.3],
+    { name: 'gorse', geo: P.gorse(), far: P.farBush(0x5a6a2a), perChunk: 10, shadow: false, scale: [0.7, 1.3],
       fits: (h, s, _x, _z, r) => h > 2 && h < 35 && s < 0.35 && r < 0.5 },
     { name: 'bracken', geo: P.bracken(), perChunk: 24, shadow: false, scale: [0.8, 1.5],
       fits: (h, s) => h > 1 && h < 30 && s < 0.3 },
-    { name: 'highland-boulder', geo: P.boulder(), perChunk: 12, shadow: false, scale: [0.4, 2.0],
+    { name: 'highland-boulder', geo: P.boulder(), far: P.farRock(0x7f7f84), perChunk: 12, shadow: false, scale: [0.4, 2.0],
       fits: (h, s, _x, _z, r) => h > 0.3 && s < 0.7 && r < (s > 0.3 || h > 50 ? 0.9 : 0.2) },
     { name: 'moor-grass', geo: P.grassTuft(), perChunk: 40, shadow: false, scale: [0.8, 1.6],
       fits: (h, s) => h > 0.6 && h < 40 && s < 0.4 },
@@ -88,11 +88,11 @@ export const fjords: Biome = {
     out.offsetHSL(0, 0, octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.04);
   },
   plants: [
-    { name: 'fjord-spruce', geo: P.spruce(), perChunk: 36, shadow: true, scale: [0.7, 1.3],
+    { name: 'fjord-spruce', geo: P.spruce(), far: P.farTree(0x5a3d26, 2.7, 0x1f3d2a, 2.0, 8, 'cone'), perChunk: 36, shadow: true, scale: [0.7, 1.3],
       fits: (h, s, x, z) => h > 1 && h < 85 && s < 0.6 && octaveNoise(x, z, 2, 0.5, 2, 0.012) > -0.25 },
-    { name: 'fjord-birch', geo: P.birch(), perChunk: 8, shadow: false, scale: [0.8, 1.2],
+    { name: 'fjord-birch', geo: P.birch(), far: P.farTree(0xe8e4dc, 4.5, 0x7d9a48, 1.2, 4.6), perChunk: 8, shadow: false, scale: [0.8, 1.2],
       fits: (h, s, _x, _z, r) => h > 1 && h < 40 && s < 0.35 && r < 0.4 },
-    { name: 'fjord-boulder', geo: P.boulder(0x75787a), perChunk: 10, shadow: false, scale: [0.5, 2.2],
+    { name: 'fjord-boulder', geo: P.boulder(0x75787a), far: P.farRock(0x75787a), perChunk: 10, shadow: false, scale: [0.5, 2.2],
       fits: (h, s) => h > 0.3 && s < 0.75 },
     { name: 'fjord-grass', geo: P.grassTuft(0x5f8a3f), perChunk: 30, shadow: false, scale: [0.8, 1.5],
       fits: (h, s) => h > 0.6 && h < 80 && s < 0.55 },
@@ -118,14 +118,14 @@ export const ireland: Biome = {
     finish(out, x, z, slope, 0.4);
   },
   plants: [
-    { name: 'oak', geo: P.oak(), perChunk: 6, shadow: true, scale: [0.8, 1.3],
+    { name: 'oak', geo: P.oak(), far: P.farTree(0x5b4330, 4, 0x3d6e2c, 2.8, 5), perChunk: 6, shadow: true, scale: [0.8, 1.3],
       fits: (h, s, _x, _z, r) => h > 1.5 && s < 0.3 && r < 0.6 },
-    { name: 'hawthorn', geo: P.hawthorn(), perChunk: 14, shadow: false, scale: [0.8, 1.4],
+    { name: 'hawthorn', geo: P.hawthorn(), far: P.farBush(0x355f2a, 0.95, 0.7), perChunk: 14, shadow: false, scale: [0.8, 1.4],
       // Hedgerow lines along field boundaries
       fits: (h, s, x, z) => h > 1 && s < 0.35 && Math.abs(octaveNoise(x, z, 1, 1, 1, 0.02)) < 0.06 },
     { name: 'irish-grass', geo: P.grassTuft(0x5aa040), perChunk: 40, shadow: false, scale: [0.8, 1.5],
       fits: (h, s) => h > 0.6 && s < 0.45 },
-    { name: 'irish-stone', geo: P.boulder(0x8a8a86), perChunk: 4, shadow: false, scale: [0.3, 1.0],
+    { name: 'irish-stone', geo: P.boulder(0x8a8a86), far: P.farRock(0x8a8a86), perChunk: 4, shadow: false, scale: [0.3, 1.0],
       fits: (h) => h > 0.5 },
   ],
   climate: { skyTop: 0x6b93c0, skyBottom: 0xd0dbe4, fog: 0xc4cfd8, fogNear: 130, fogFar: 500, water: 0x3a5560, waterOpacity: 0.82, rain: 0.6, snow: false },
@@ -153,13 +153,13 @@ export const alps: Biome = {
     out.offsetHSL(0, 0, octaveNoise(x * 3, z * 3, 1, 1, 1, 0.05) * 0.04);
   },
   plants: [
-    { name: 'alpine-spruce', geo: P.spruce(11, 0x23422c), perChunk: 26, shadow: true, scale: [0.7, 1.2],
+    { name: 'alpine-spruce', geo: P.spruce(11, 0x23422c), far: P.farTree(0x5a3d26, 3.3, 0x23422c, 2.4, 9.8, 'cone'), perChunk: 26, shadow: true, scale: [0.7, 1.2],
       fits: (h, s) => h > 20 && h < 95 && s < 0.5 },
     { name: 'wildflowers', geo: P.wildflowers(), perChunk: 30, shadow: false, scale: [0.8, 1.6],
       fits: (h, s) => h > 1 && h < 40 && s < 0.25 },
     { name: 'alpine-grass', geo: P.grassTuft(0x7ab855), perChunk: 30, shadow: false, scale: [0.8, 1.4],
       fits: (h, s) => h > 0.6 && h < 100 && s < 0.4 },
-    { name: 'alpine-boulder', geo: P.boulder(0x8a8a8f), perChunk: 10, shadow: false, scale: [0.5, 2.5],
+    { name: 'alpine-boulder', geo: P.boulder(0x8a8a8f), far: P.farRock(0x8a8a8f), perChunk: 10, shadow: false, scale: [0.5, 2.5],
       fits: (h, s, _x, _z, r) => h > 0.5 && s < 0.8 && r < (h > 90 ? 0.9 : 0.25) },
   ],
   climate: { skyTop: 0x3f7fd0, skyBottom: 0xbcd8f0, fog: 0xc6dcef, fogNear: 220, fogFar: 650, water: 0x3d7a8f, waterOpacity: 0.8, rain: 0.3, snow: false },
@@ -183,9 +183,9 @@ export const newzealand: Biome = {
     finish(out, x, z, slope, 0.4);
   },
   plants: [
-    { name: 'tree-fern', geo: P.treeFern(), perChunk: 14, shadow: true, scale: [0.8, 1.3],
+    { name: 'tree-fern', geo: P.treeFern(), far: P.farTree(0x4a3524, 3.5, 0x3f7f2e, 1.8, 3.6, 'flat'), perChunk: 14, shadow: true, scale: [0.8, 1.3],
       fits: (h, s, x, z) => h > 1 && h < 30 && s < 0.4 && octaveNoise(x, z, 2, 0.5, 2, 0.01) > 0.1 },
-    { name: 'nz-tree', geo: P.roundTree(0x4f3a28, 0x2a5f2c), perChunk: 10, shadow: true, scale: [0.8, 1.4],
+    { name: 'nz-tree', geo: P.roundTree(0x4f3a28, 0x2a5f2c), far: P.farTree(0x4f3a28, 3, 0x2a5f2c, 2.2, 4), perChunk: 10, shadow: true, scale: [0.8, 1.4],
       fits: (h, s, x, z) => h > 1 && h < 35 && s < 0.35 && octaveNoise(x, z, 2, 0.5, 2, 0.01) > 0.2 },
     { name: 'tussock', geo: P.tussock(), perChunk: 30, shadow: false, scale: [0.8, 1.5],
       fits: (h, s) => h > 25 && s < 0.45 },
